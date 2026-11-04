@@ -1,0 +1,234 @@
+@import "tailwindcss";
+@import "uniwind";
+
+/* ============================================================
+   PETTAGAM — mobile design tokens (Vault teal + Brass)
+
+   The single source of colour, type, radius and elevation for the app.
+   Values come from the Pettagam design system tokens (claude.ai artifact "Pettagam",
+   project/ds/pettagam/tokens.json);
+   dark values keep the same roles with checked contrast.
+
+   SURFACES   canvas · surface · raised · sheet · fill
+   LINES      line · line-strong · border-strong (input/control border at rest) · focus (ring)
+   TEXT       fg · fg-muted · fg-subtle
+   BRAND      primary · primary-pressed · primary-mid · primary-soft · primary-fg · on-primary
+   ACCENT     brass · brass-soft · brass-fg · brass-deep · on-brass
+   HERO       hero · hero-top · on-hero · on-hero-muted · on-hero-soft · hero-positive · hero-negative
+   MONEY      success (+ in) · danger (− out) · warning (due soon), each with -soft / -fg
+   OTHER      scrim
+
+   Use:  bg-canvas  bg-surface  text-fg  text-fg-muted  border-line
+         bg-primary text-on-primary  bg-brass-soft text-brass-deep
+   Colour props (RN):  colorClassName="accent-primary"  (accent-<token>)
+   From JS (charts, native modules, navigation):  useThemeColor("canvas")
+
+   Rules
+   - Page ground is `canvas`; cards are white `surface` with a `line` border.
+   - One accent for actions: `primary` (Vault 700). `brass` marks highlights,
+     insights and the add button — never body text (use `brass-fg`).
+   - Money is never told by colour alone: amounts carry + / − and dues a date.
+   - Radius: chip 10 · input/button 14 · card 16 · hero/sheet 28.
+   - Type: Golos Text for the interface, Fraunces (font-display) only for hero lines.
+   - Focus: 1.5px primary border plus a solid 3px `focus` ring.
+   - Motion 120ms press · 180ms state · 240ms push · 320ms sheet; ease-out.
+   ============================================================ */
+
+@theme {
+  /* Golos Text — one family per weight (Android picks weight by family name). */
+  --font-regular: "GolosText-Regular";
+  --font-medium: "GolosText-Medium";
+  --font-semibold: "GolosText-SemiBold";
+  --font-bold: "GolosText-Bold";
+  --font-extrabold: "GolosText-ExtraBold";
+  --font-display: "Fraunces_600SemiBold";
+  --font-tamil: "NotoSansTamil_700Bold";
+
+  /* Type scale on Tailwind's standard size NAMES so tailwind-merge reads them as sizes
+     (a custom name like text-md would be mistaken for a colour and dropped).
+     xs 11 · sm 12 · base 13 · lg 14 · xl 15 · 2xl 16 · 3xl 18 · 4xl 20 · 5xl 24 · 6xl 32 */
+  --text-xs: 11px;
+  --text-xs--line-height: 15px;
+  --text-sm: 12px;
+  --text-sm--line-height: 16px;
+  --text-base: 13px;
+  --text-base--line-height: 18px;
+  --text-lg: 14px;
+  --text-lg--line-height: 19px;
+  --text-xl: 15px;
+  --text-xl--line-height: 20px;
+  --text-2xl: 16px;
+  --text-2xl--line-height: 22px;
+  --text-3xl: 18px;
+  --text-3xl--line-height: 24px;
+  --text-4xl: 20px;
+  --text-4xl--line-height: 26px;
+  --text-5xl: 24px;
+  --text-5xl--line-height: 30px;
+  --text-6xl: 32px;
+  --text-6xl--line-height: 38px;
+
+  --radius-chip: 10px;
+  --radius-input: 14px;
+  --radius-button: 14px;
+  --radius-card: 16px;
+  --radius-hero: 28px;
+  --radius-sheet: 28px;
+
+  --shadow-card: 0 1px 2px rgb(20 32 30 / 0.05), 0 2px 6px rgb(20 32 30 / 0.04);
+  --shadow-raised: 0 2px 4px rgb(20 32 30 / 0.04), 0 8px 18px rgb(20 32 30 / 0.06);
+  --shadow-float: 0 8px 16px rgb(20 32 30 / 0.06), 0 32px 56px rgb(20 32 30 / 0.12);
+  --shadow-hero: 0 10px 28px rgb(8 47 44 / 0.22);
+  --shadow-primary: 0 8px 22px rgb(15 86 80 / 0.24);
+  --shadow-brass: 0 8px 22px rgb(184 134 42 / 0.28);
+
+  /* 4px base · 16 gutter · 10 between cards · 24 between sections */
+  --spacing-gutter: 16px;
+  --spacing-card: 10px;
+  --spacing-section: 28px;
+
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+
+  /* Scheme-dependent — values live in @variant light / @variant dark */
+  --color-canvas: unset;
+  --color-surface: unset;
+  --color-raised: unset;
+  --color-sheet: unset;
+  --color-fill: unset;
+  --color-line: unset;
+  --color-line-strong: unset;
+  --color-border-strong: unset;
+  --color-focus: unset;
+  --color-fg: unset;
+  --color-fg-muted: unset;
+  --color-fg-subtle: unset;
+  --color-primary: unset;
+  --color-primary-pressed: unset;
+  --color-primary-mid: unset;
+  --color-primary-soft: unset;
+  --color-primary-fg: unset;
+  --color-on-primary: unset;
+  --color-brass: unset;
+  --color-brass-soft: unset;
+  --color-brass-fg: unset;
+  --color-brass-deep: unset;
+  --color-on-brass: unset;
+  --color-hero: unset;
+  --color-hero-top: unset;
+  --color-hero-tile: unset;
+  --color-on-hero: unset;
+  --color-on-hero-muted: unset;
+  --color-on-hero-soft: unset;
+  --color-hero-positive: unset;
+  --color-hero-negative: unset;
+  --color-success: unset;
+  --color-success-soft: unset;
+  --color-success-fg: unset;
+  --color-danger: unset;
+  --color-danger-soft: unset;
+  --color-danger-fg: unset;
+  --color-warning: unset;
+  --color-warning-soft: unset;
+  --color-warning-fg: unset;
+  --color-scrim: unset;
+  --color-white: unset;
+  --color-black: unset;
+}
+
+@layer theme {
+  :root {
+    /* ====================== LIGHT ====================== */
+    @variant light {
+      --color-canvas: #f3f4ef;
+      --color-surface: #ffffff;
+      --color-raised: #ffffff;
+      --color-sheet: #ffffff;
+      --color-fill: #eef1ec;
+      --color-line: #dfe2da;
+      --color-line-strong: #c6ccc6;
+      --color-border-strong: #868f8b;
+      --color-focus: #2a8277;
+      --color-fg: #14201e;
+      --color-fg-muted: #5b6763;
+      --color-fg-subtle: #66726e;
+      --color-primary: #0f5650;
+      --color-primary-pressed: #082f2c;
+      --color-primary-mid: #16716a;
+      --color-primary-soft: #dcebe8;
+      --color-primary-fg: #0b3f3b;
+      --color-on-primary: #ffffff;
+      --color-brass: #d4a23f;
+      --color-brass-soft: #f6ebd3;
+      --color-brass-fg: #8a6420;
+      --color-brass-deep: #3d2c0a;
+      --color-on-brass: #14201e;
+      --color-hero: #082f2c;
+      --color-hero-top: #0b3f3b;
+      --color-hero-tile: #0f5650;
+      --color-on-hero: #ffffff;
+      --color-on-hero-muted: #c9dcd8;
+      --color-on-hero-soft: #b5d6d0;
+      --color-hero-positive: #8fd9b0;
+      --color-hero-negative: #f2b8ae;
+      --color-success: #1c7a4a;
+      --color-success-soft: #eaf5ee;
+      --color-success-fg: #0f4429;
+      --color-danger: #b23a2b;
+      --color-danger-soft: #fbece9;
+      --color-danger-fg: #651f17;
+      --color-warning: #8f5c00;
+      --color-warning-soft: #fbf1dc;
+      --color-warning-fg: #8f5c00;
+      --color-scrim: #14201e8c;
+      --color-white: #ffffff;
+      --color-black: #000000;
+    }
+
+    /* ====================== DARK ====================== */
+    @variant dark {
+      --color-canvas: #0b1413;
+      --color-surface: #131e1c;
+      --color-raised: #17231f;
+      --color-sheet: #0f1917;
+      --color-fill: #1e2a27;
+      --color-line: #26332f;
+      --color-line-strong: #3a4945;
+      --color-border-strong: #6b7a76;
+      --color-focus: #5fb8ad;
+      --color-fg: #eceeea;
+      --color-fg-muted: #a3b0ac;
+      --color-fg-subtle: #7b8884;
+      --color-primary: #5fb8ad;
+      --color-primary-pressed: #4aa397;
+      --color-primary-mid: #3e9a90;
+      --color-primary-soft: #173a36;
+      --color-primary-fg: #bfe3dd;
+      --color-on-primary: #06201e;
+      --color-brass: #d4a23f;
+      --color-brass-soft: #2e2615;
+      --color-brass-fg: #e2b65a;
+      --color-brass-deep: #f1e2c0;
+      --color-on-brass: #14201e;
+      --color-hero: #0b2422;
+      --color-hero-top: #0f3633;
+      --color-hero-tile: #0f5650;
+      --color-on-hero: #ffffff;
+      --color-on-hero-muted: #c9dcd8;
+      --color-on-hero-soft: #b5d6d0;
+      --color-hero-positive: #8fd9b0;
+      --color-hero-negative: #f2b8ae;
+      --color-success: #5cc98c;
+      --color-success-soft: #1a3527;
+      --color-success-fg: #8fdcb0;
+      --color-danger: #ff8b7a;
+      --color-danger-soft: #3d201b;
+      --color-danger-fg: #ffb3a8;
+      --color-warning: #f0b54a;
+      --color-warning-soft: #3a2d12;
+      --color-warning-fg: #f5cd85;
+      --color-scrim: #00000099;
+      --color-white: #ffffff;
+      --color-black: #000000;
+    }
+  }
+}

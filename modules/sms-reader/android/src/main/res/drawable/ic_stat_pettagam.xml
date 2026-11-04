@@ -1,0 +1,6 @@
+<!-- Status-bar icon: the chest mark, white on transparent (Android tints it). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+  android:width="24dp" android:height="24dp" android:viewportWidth="48" android:viewportHeight="48">
+  <path android:fillColor="#FFFFFFFF" android:pathData="M8,19.5L10.6,14C11.6,11.8 13.7,10.4 16.1,10.4H32C34.3,10.4 36.3,11.8 37.2,14L40,19.5Z" />
+  <path android:fillColor="#FFFFFFFF" android:pathData="M10.5,22.5H37.5A4.5,4.5 0,0 1,42 27V36.5A4.5,4.5 0,0 1,37.5 41H10.5A4.5,4.5 0,0 1,6 36.5V27A4.5,4.5 0,0 1,10.5 22.5ZM24,28A2,2 0,0 0,23 31.7V34.2A1,1 0,0 0,25 34.2V31.7A2,2 0,0 0,24 28Z" />
+</vector>

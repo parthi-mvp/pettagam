@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 720" width="600" height="720"><defs>
+ <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F2CF7A"/><stop offset="0.55" stop-color="#D4A23F"/><stop offset="1" stop-color="#A97A24"/></linearGradient>
+ <linearGradient id="goldLid" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F7DE9C"/><stop offset="1" stop-color="#D4A23F"/></linearGradient>
+ <linearGradient id="bgDark" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2A261C"/><stop offset="1" stop-color="#17150F"/></linearGradient>
+ <radialGradient id="glow" cx="0.5" cy="0.46" r="0.42"><stop offset="0" stop-color="#D4A23F" stop-opacity="0.22"/><stop offset="1" stop-color="#D4A23F" stop-opacity="0"/></radialGradient>
+</defs><g transform="translate(108 0) scale(8)"><g>
+ <circle cx="17.5" cy="21" r="3.6" fill="#F7DE9C"/><circle cx="24" cy="20" r="3.8" fill="#FBE8B4"/><circle cx="30.5" cy="21" r="3.6" fill="#F7DE9C"/>
+ <path d="M8 19.5 L10.6 14 C11.6 11.8 13.7 10.4 16.1 10.4 H32 C34.3 10.4 36.3 11.8 37.2 14 L40 19.5 Z" fill="url(#goldLid)"/>
+ <rect x="6" y="22.5" width="36" height="18.5" rx="4.5" fill="url(#gold)"/>
+ <rect x="9" y="23.6" width="30" height="1.4" rx="0.7" fill="#FBE8B4" opacity="0.6"/>
+ <rect x="19.4" y="26" width="9.2" height="10.4" rx="2.4" fill="#17150F"/>
+ <circle cx="24" cy="30" r="1.9" fill="#D4A23F"/><path d="M24 31 v3.2" stroke="#D4A23F" stroke-width="1.9" stroke-linecap="round"/>
+</g></g><text x="300" y="520" text-anchor="middle" font-family="Fraunces" font-weight="600" font-size="92" fill="#F7F3EA" letter-spacing="-1.5">Pettagam</text><text x="300" y="582" text-anchor="middle" font-family="Golos Text" font-weight="500" font-size="26" fill="#D4A23F" letter-spacing="7">YOUR MONEY, KEPT SAFE</text></svg>
