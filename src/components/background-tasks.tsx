@@ -71,7 +71,9 @@ export function BackgroundTasks() {
   useEffect(() => {
     const open = (r: Notifications.NotificationResponse | null) => {
       const url = r?.notification.request.content.data?.url;
-      if (typeof url === 'string') router.push(url as Href);
+      if (typeof url !== 'string') return;
+      Notifications.clearLastNotificationResponse(); // handled: a later launch shouldn't open it again
+      router.push(url as Href);
     };
     open(Notifications.getLastNotificationResponse());
     const sub = Notifications.addNotificationResponseReceivedListener(open);
