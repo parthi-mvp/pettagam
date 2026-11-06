@@ -17,9 +17,6 @@ export function parseClock(c: Clock) {
   return { millis: parseInt(m, 36), counter: parseInt(n, 36), node: node.join('-') };
 }
 
-/** Rows written before field clocks existed: every column counts as written at the row's updated_at. */
-export const legacyClock = (updatedAt: number) => clockOf(Math.max(0, updatedAt), 0, '0');
-
 /** The clock for a new local edit: never behind the wall clock, never behind any clock seen before. */
 export function tick(last: Clock | null, wall: number, node: string): Clock {
   const l = last ? parseClock(last) : { millis: 0, counter: 0 };
@@ -41,10 +38,14 @@ export function observe(last: Clock | null, remote: Clock, wall: number, node: s
 export const NOT_A_FIELD = new Set(['id', 'updated_at']);
 
 export type Row = { id: string; updated_at: number; [col: string]: unknown };
-/** A row with the clock of each of its columns (missing clocks fall back to legacyClock). */
+/** A row with the clock of each of its columns. */
 export type RowState = { row: Row; clocks: Record<string, Clock> };
 
-const clockFor = (s: RowState, col: string) => s.clocks[col] ?? legacyClock(s.row.updated_at);
+/**
+ * A column with no clock was never written: a default category's seeded values, or a column a later
+ * migration added. Any real write beats it.
+ */
+const clockFor = (s: RowState, col: string) => s.clocks[col] ?? '';
 
 /**
  * Merge another phone's copy of a row into ours: each column takes the remote value only when its
@@ -106,9 +107,12 @@ export function unpackRow(packed: PackedClocks | undefined, tbl: string, row: Ro
 }
 
 /**
- * Which copy of a duplicate to keep (the same SMS or category made on two phones): the one with the
- * canonical id, else the oldest, else the lowest id. Every phone picks the same one.
+ * Only the columns this phone's table has. A phone on a newer app version may send a column added
+ * after this one's version (written as "no such column" otherwise, failing every sync until it updates);
+ * it's skipped here and read again from the snapshots once this phone updates (see migrate()).
  */
-export function pickKeeper<T extends { id: string; created_at: number }>(rows: T[], canonicalId: string | null): T {
-  return [...rows].sort((a, b) => Number(b.id === canonicalId) - Number(a.id === canonicalId) || a.created_at - b.created_at || (a.id < b.id ? -1 : 1))[0];
+export function knownColumns(row: Row, columns: Set<string>): Row {
+  const out: Row = { id: row.id, updated_at: row.updated_at };
+  for (const [k, v] of Object.entries(row)) if (columns.has(k)) out[k] = v;
+  return out;
 }

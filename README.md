@@ -16,12 +16,12 @@ An offline-first mobile app (Expo / React Native) for tracking:
 | App framework | **Expo SDK 58**, React Native 0.88, TypeScript | One codebase for Android and iOS, with EAS cloud builds |
 | Navigation | **Expo Router** (native tabs and stack) | File-based routes in `src/app/` |
 | Storage | **expo-sqlite** on the phone; optional backup to the user's own Google Drive (`drive.appdata`) | No backend to run or pay for; nothing leaves the phone except to the user's Drive |
-| Change tracking | An outbox of rows edited since the last backup | Back up only when something changed |
+| Change tracking | A clock per field (`field_clock`, hybrid logical clocks) | Uploads only what changed; merges per field |
 | State | The SQLite cache plus a small `useLiveQuery` hook | No Redux/Zustand to keep in step |
 | SMS reading | Local Expo native module `modules/sms-reader` (Kotlin, `content://sms/inbox`) | Supports the new architecture, with no unmaintained third-party library |
 | SMS parsing | Pure TypeScript regex parser `src/sms/parser.ts` | Runs on the device and is unit-tested |
 | Auth | None. Google Sign-In only to reach Drive, when backup is turned on | No sign-up wall for a finance app |
-| Sync | Each phone writes its own `pettagam-<device>.json` (full snapshot, soft deletes included) and merges the others' files, newest row wins | Phones never write the same file, so no edit is lost |
+| Sync | Each phone writes only its own Drive files: small change files, plus a full snapshot every 50; others merge them field by field (newest clock wins) | No server; phones never write the same file, so no edit is lost |
 | Charts | Lightweight View-based bars | No extra native chart dependencies |
 | Builds | **EAS Build** (`eas.json` has development, preview and production profiles) | No need for local Android Studio |
 
@@ -99,7 +99,7 @@ Backup is optional; the app works fully without it. To enable it in your builds:
 
 How it works:
 
-- **Saving.** Every edit is saved on the phone and marked in the outbox. A few seconds later, and when the app opens or goes to the background, the phone uploads a small change file with just the fields it changed; every 50 change files it also writes a full snapshot and removes its older change files.
+- **Saving.** Every edit is saved on the phone and its changed fields get a fresh clock. A few seconds later, and when the app opens or goes to the background, the phone uploads a small change file with just the fields it changed; every 50 change files it also writes a full snapshot and removes its older change files.
 - **Other phones.** Each sync lists the backup files; any other phone's file that changed is downloaded and merged in, keeping the newer copy of each entry.
 - **Deletes.** Deletes are soft, so they reach every phone.
 - **Conflicts.** Every field of every entry has its own clock (a hybrid logical clock), so edits to different fields on different phones both survive, and all phones end up the same (`src/sync/crdt.ts`, tested with random multi-phone runs).

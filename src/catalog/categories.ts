@@ -46,15 +46,3 @@ export const INCOME_CATEGORY_NAMES = CATEGORY_CATALOG.filter((c) => c.kind === '
 
 /** Colours offered for categories you create (Category form, and quick-add from the category sheet). */
 export const CATEGORY_COLORS = ['#E4572E', '#F3A712', '#7CB518', '#29BF12', '#2A9D8F', '#00A6A6', '#2E86AB', '#3D5A80', '#A846A0', '#FF5D8F', '#8D0801', '#6C584C'];
-
-/**
- * The drawn icons categories used before Material Symbols, mapped to their closest symbol. Stored values
- * stay as they are (no data change); src/components/icons.tsx categoryIcon() translates when drawing.
- */
-export const LEGACY_CATEGORY_ICONS: Record<string, string> = {
-  bag: 'shopping_bag', receipt: 'receipt_long', fuel: 'local_gas_station', house: 'home', home: 'home', heart: 'favorite',
-  film: 'movie', book: 'menu_book', plane: 'flight', card: 'payment', bank: 'account_balance', coin: 'payments',
-  refund: 'currency_exchange', repeat: 'loop', chit: 'groups', bulb: 'lightbulb', mail: 'mail', sms: 'sms',
-  phone: 'mobile', gift: 'redeem', cart: 'shopping_cart', coffee: 'local_cafe', pie: 'pie_chart', trend: 'trending_up',
-  lock: 'lock',
-};

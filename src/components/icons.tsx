@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 
-import { CATEGORY_CATALOG, LEGACY_CATEGORY_ICONS } from '@/catalog/categories';
-import { canonicalSymbol, symbolCodepoint } from '@/catalog/symbol-index';
+import { CATEGORY_CATALOG } from '@/catalog/categories';
+import { symbolCodepoint } from '@/catalog/symbol-index';
 
 /**
  * Line icons from the Pettagam design system: 24px grid, 1.8px stroke, round caps/joins.
@@ -416,29 +416,15 @@ const GUESSES: [RegExp, string][] = [
 ];
 
 /**
- * A category's icon, always a Material Symbol (or the user's emoji):
- * the symbol or emoji they chose → a default category's own symbol → an old drawn icon's closest symbol
- * (LEGACY_CATEGORY_ICONS; stored values aren't rewritten) → a guess from the name. Transfers aren't a
- * category and keep the transfer arrows.
+ * A category's icon, always a Material Symbol (or the user's emoji): the one they chose → a default
+ * category's own symbol → a guess from the name. Transfers aren't a category and keep the transfer arrows.
  */
 export function categoryIcon(category: string | null | undefined, type?: string, chosen?: string | null): AnyIcon {
   if (type === 'transfer') return 'transfer';
   if (chosen && isExtraIcon(chosen)) return chosen;
   const c = (category ?? '').trim().toLowerCase();
   const seed = SEED_ICONS.get(c);
-  if (seed && (!chosen || chosen in LEGACY_CATEGORY_ICONS)) return seed;
-  if (chosen && LEGACY_CATEGORY_ICONS[chosen]) return `ms:${LEGACY_CATEGORY_ICONS[chosen]}`;
+  if (seed) return seed;
   const guess = GUESSES.find(([re]) => re.test(c))?.[1];
   return `ms:${guess ?? (type === 'income' ? 'account_balance_wallet' : 'receipt_long')}`;
-}
-
-/**
- * What a category's icon should be stored as: "ms:<shown name>" or "emoji:…", never an old drawn name,
- * an alias, or nothing. Used to rewrite stored values once (src/db/category-icons.ts).
- */
-export function canonicalCategoryIcon(name: string, kind: string, stored: string | null): string {
-  const icon = categoryIcon(name, kind, stored);
-  if (!icon.startsWith('ms:')) return icon;
-  const shown = canonicalSymbol(icon.slice(3));
-  return shown ? `ms:${shown}` : icon;
 }

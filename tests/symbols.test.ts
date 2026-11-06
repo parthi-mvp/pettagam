@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { CATEGORY_CATALOG, LEGACY_CATEGORY_ICONS } from '../src/catalog/categories.ts';
+import { CATEGORY_CATALOG } from '../src/catalog/categories.ts';
 import { MATERIAL_SYMBOLS_DATA } from '../src/catalog/material-symbols.ts';
 import { parseSymbols, POPULAR_SYMBOLS, searchSymbols, symbolLookup } from '../src/catalog/symbols.ts';
 
@@ -34,12 +34,10 @@ test('an alias resolves to the shown name of the same glyph', () => {
   assert.equal(lookup.get('pets')?.name, 'pets');
 });
 
-test('every default category icon and every old-icon mapping exists in the font', () => {
+test('every default category icon exists in the font', () => {
   const names = symbolLookup(all);
   const seeds = CATEGORY_CATALOG.map((c) => c.icon).filter((i) => !i.startsWith('ms:') || !names.has(i.slice(3)));
   assert.deepEqual(seeds, [], 'default categories need a valid ms: icon');
-  const legacy = Object.entries(LEGACY_CATEGORY_ICONS).filter(([, ms]) => !names.has(ms));
-  assert.deepEqual(legacy, []);
 });
 
 test('default categories each have their own icon, stored by its shown name', () => {

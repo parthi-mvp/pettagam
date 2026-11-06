@@ -17,7 +17,7 @@ import { HeroBackdrop, PressableScale, Text } from './ui';
  * App lock: covers the whole app while locked, and also whenever the app isn't in front (so the
  * recent-apps preview never shows balances). Asks for the fingerprint / face as soon as it shows.
  */
-export function AppLockGate({ signedIn }: { signedIn: boolean }) {
+export function AppLockGate({ ready }: { ready: boolean }) {
   const insets = useSafeAreaInsets();
   const { enabled, locked, unlock } = useAppLock();
   const [appState, setAppState] = useState<AppStateStatus>((AppState.currentState as AppStateStatus | null) ?? 'active');
@@ -70,11 +70,11 @@ export function AppLockGate({ signedIn }: { signedIn: boolean }) {
   // Prompt as soon as the lock is showing and the app is in front.
   useEffect(() => {
     // Scheduled, not called: the system prompt is an external effect; state changes after it answers.
-    if (signedIn && enabled && locked && active) queueMicrotask(tryUnlock);
+    if (ready && enabled && locked && active) queueMicrotask(tryUnlock);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signedIn, enabled, locked, active]);
+  }, [ready, enabled, locked, active]);
 
-  if (!signedIn || !enabled || (!locked && active)) return null;
+  if (!ready || !enabled || (!locked && active)) return null;
 
   return (
     <Animated.View

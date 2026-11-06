@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { changedColumns, clockOf, legacyClock, mergeRow, observe, packClocks, tick, unpackRow, type Clock, type Row, type RowState } from '../src/sync/crdt.ts';
+import { changedColumns, clockOf, knownColumns, mergeRow, observe, packClocks, tick, unpackRow, type Clock, type Row, type RowState } from '../src/sync/crdt.ts';
 
 test('clocks sort in time order, and never go backwards', () => {
   assert.ok(clockOf(1000, 0, 'b') < clockOf(1001, 0, 'a'));
@@ -13,7 +13,6 @@ test('clocks sort in time order, and never go backwards', () => {
   const fast = clockOf(9_000_000, 3, 'p2');
   const seen = observe(b, fast, 5000, 'p1');
   assert.ok(tick(seen, 5001, 'p1') > fast);
-  assert.ok(legacyClock(0) < tick(null, 1, 'x'), 'seeded rows lose to any real edit');
 });
 
 test('mergeRow: each field keeps its own latest edit', () => {
@@ -112,4 +111,20 @@ test('convergence: three phones, random edits, random sync order, same data at t
       assert.equal(phones[0].rows.get(id)?.row[col], value, `seed ${seed}: ${k}`);
     }
   }
+});
+
+test('knownColumns: a newer phone’s extra columns are left out, the rest merges as usual', () => {
+  const newer: Row = { id: 'a1', updated_at: 5, name: 'HDFC', remind_days: 3 };
+  const cols = new Set(['id', 'updated_at', 'name']);
+  assert.deepEqual(knownColumns(newer, cols), { id: 'a1', updated_at: 5, name: 'HDFC' });
+  const m = mergeRow(null, { row: knownColumns(newer, cols), clocks: { name: clockOf(5, 0, 'b'), remind_days: clockOf(5, 0, 'b') } });
+  assert.deepEqual(Object.keys(m?.patch ?? {}).sort(), ['name', 'updated_at']);
+});
+
+test('a field never written here (a seeded default, or a column a later migration added) takes any real write', () => {
+  const local: RowState = { row: { id: 'a1', updated_at: 900, name: 'HDFC', remind_days: null }, clocks: { name: clockOf(900, 0, 'me') } };
+  const remote: RowState = { row: { id: 'a1', updated_at: 500, name: 'HDFC', remind_days: 3 }, clocks: { name: clockOf(100, 0, 'b'), remind_days: clockOf(500, 0, 'b') } };
+  assert.deepEqual(mergeRow(local, remote)?.patch, { remind_days: 3, updated_at: 900 });
+  const seed: RowState = { row: { id: 'cat-food', updated_at: 0, color: '#f00' }, clocks: {} };
+  assert.equal(mergeRow(seed, seed), null, 'two untouched seeds: nothing to merge');
 });

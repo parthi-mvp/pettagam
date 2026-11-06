@@ -39,10 +39,8 @@ export const VIA_LABELS: Record<Via, string> = {
   cheque: 'Cheque',
 };
 
-const LEGACY_TRANSFER = new Set(['neft', 'imps', 'rtgs', 'netbanking']);
-/** Label for a stored method; the separate rails a short-lived build saved read as "Bank transfer" too. */
-export const viaLabel = (via: string | null | undefined) =>
-  !via ? null : LEGACY_TRANSFER.has(via) ? VIA_LABELS.transfer : (VIA_LABELS[via as Via] ?? null);
+/** Label for a stored payment method, or null when not recorded. */
+export const viaLabel = (via: string | null | undefined) => (via ? (VIA_LABELS[via as Via] ?? null) : null);
 
 /** How an SMS says the money moved. First match wins: the specific rails before the generic "card". */
 export function paymentMethod(body: string, instrument: ParsedSms['instrument'], atm: boolean): Via | null {

@@ -1,5 +1,5 @@
 import { useSQLiteContext } from 'expo-sqlite';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Alert, Pressable, View } from 'react-native';
 import { toast } from 'sonner-native';
 
@@ -46,12 +46,6 @@ export function ChitPanel({ inv, entries }: { inv: Investment; entries: Investme
   const [target, setTarget] = useState('12');
   const [showAll, setShowAll] = useState(false);
   const [busy, setBusy] = useState(false);
-
-  // Chits saved by older versions counted the prize against "invested"; fix the stored numbers once if stale.
-  const stale = !!s && (Math.abs(inv.invested_amount - s.paid) > 0.5 || Math.abs(inv.current_value - (s.prized ? 0 : s.paid)) > 0.5);
-  useEffect(() => {
-    if (stale) recomputeInvested(db, inv.id);
-  }, [stale, db, inv.id]);
 
   if (!plan || !s) {
     return (

@@ -44,14 +44,14 @@ export function Field({
   error?: string | null;
   /** Helper line under the field (hidden while an error shows). */
   hint?: string;
-  /** Denser 48px variant (sign-in card). */
+  /** Denser 48px variant. */
   compact?: boolean;
   /** Inside the field on the right (a show-password eye, a unit). */
   accessory?: ReactNode;
 }) {
   const [focused, setFocused] = useState(false);
   const input = useRef<ComponentRef<typeof RNTextInput>>(null);
-  // Keep our handle on the input and still pass it to a caller's ref (sign-in moves focus between fields).
+  // Keep our handle on the input and still pass it to a caller's ref (e.g. to move focus between fields).
   const setRef = (el: ComponentRef<typeof RNTextInput> | null) => {
     input.current = el;
     if (typeof ref === 'function') ref(el);

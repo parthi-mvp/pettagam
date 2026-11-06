@@ -14,5 +14,3 @@ export const findSymbols = (query: string, limit?: number) => searchSymbols(symb
 
 export const SYMBOL_COUNT = () => symbols().length;
 
-/** Any official name (alias too) → the name the catalogue shows for that glyph; null if unknown. */
-export const canonicalSymbol = (name: string) => (byName ??= symbolLookup(symbols())).get(name)?.name ?? null;

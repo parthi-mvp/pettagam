@@ -2,21 +2,17 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import { Platform } from 'react-native';
 
 import { deviceId, observeClock, stampFields } from '@/db/clock';
-import { mergeDuplicates } from '@/db/dedupe';
 import { emitChange } from '@/db/events';
 import { getSetting, setSetting, upsertRaw } from '@/db/repo';
 import { SYNCED_TABLES } from '@/db/types';
 
-import { mergeRow, packClocks, unpackRow, type Clock, type PackedClocks, type Row } from './crdt';
+import { knownColumns, mergeRow, packClocks, unpackRow, type Clock, type PackedClocks, type Row } from './crdt';
 import * as Drive from './drive';
 import { groupDevices, KEEP_LOGS, logName, parseName, planPull, snapshotName, SNAPSHOT_EVERY, staleDevices, type DeviceInfo, type RemoteFile } from './drive-plan';
 import { describeSyncError } from './errors';
 
-/**
- * A backup file. 2 = snapshot (every row), 3 = change file (only changed fields of changed rows);
- * both carry each column's clock. 1 = the first version's rows-only file.
- */
-type Snapshot = { format: 1 | 2 | 3; exportedAt: number; deviceId: string; tables: Record<string, Row[]>; clocks?: PackedClocks };
+/** A backup file: a snapshot (every row) or a change file (only changed fields of changed rows), with each column's clock. */
+type Snapshot = { kind: 'snapshot' | 'changes'; exportedAt: number; deviceId: string; tables: Record<string, Row[]>; clocks: PackedClocks };
 
 /**
  * Backup and multi-device sync through the user's own Google Drive (hidden app folder), no server.
@@ -104,11 +100,13 @@ async function mergeIn(db: SQLiteDatabase, snap: Snapshot) {
       const remoteRows = snap.tables[table];
       if (!remoteRows?.length) continue;
       const localRows = new Map((await txn.getAllAsync<Row>(`SELECT * FROM ${table}`)).map((r) => [r.id, r]));
+      const columns = new Set((await txn.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`)).map((c) => c.name));
       const localClocks = new Map<string, Record<string, Clock>>();
       for (const c of await txn.getAllAsync<{ row_id: string; col: string; hlc: Clock }>('SELECT row_id, col, hlc FROM field_clock WHERE tbl = ?', [table])) {
         (localClocks.get(c.row_id) ?? localClocks.set(c.row_id, {}).get(c.row_id)!)[c.col] = c.hlc;
       }
-      for (const remote of remoteRows) {
+      for (const sent of remoteRows) {
+        const remote = knownColumns(sent, columns);
         const local = localRows.get(remote.id);
         // A change file edits an entry this phone has never had whole (its snapshot normally brings it): skip.
         if (!local && !('created_at' in remote)) continue;
@@ -152,11 +150,7 @@ async function run(db: SQLiteDatabase) {
   try {
     const me = await deviceId(db);
     const merged = await pull(db, me);
-    // Another phone may have made the same SMS entry or category before ids were shared.
-    if (merged) {
-      await mergeDuplicates(db);
-      emitChange('*');
-    }
+    if (merged) emitChange('*');
     await push(db, me);
     const now = Date.now();
     await setSetting(db, 'last_sync_at', String(now));
@@ -175,7 +169,6 @@ async function pull(db: SQLiteDatabase, me: string) {
   // A minute of overlap: a file written while the last list ran still shows up; re-applying is harmless.
   const files = await Drive.listFiles(since ? new Date(new Date(since).getTime() - 60_000).toISOString() : undefined);
   const applied = await readJson<Record<string, number>>(db, 'drive_applied', {});
-  const seen = await readJson<Record<string, string>>(db, 'drive_seen', {});
   let merged = 0;
 
   const mergeSnapshot = async (device: string, file: RemoteFile | null) => {
@@ -184,16 +177,11 @@ async function pull(db: SQLiteDatabase, me: string) {
     if (!f || !snap) return;
     merged += await mergeIn(db, snap);
     const p = parseName(f);
-    if (p?.kind === 'snapshot' && p.seq != null) applied[device] = Math.max(applied[device] ?? 0, p.seq);
-    else seen[f.id] = f.modifiedTime;
+    if (p?.kind === 'snapshot') applied[device] = Math.max(applied[device] ?? 0, p.seq);
   };
 
-  for (const a of planPull(files, me, applied, seen)) {
-    if (a.type === 'legacy') {
-      const snap = await Drive.download<Snapshot>(a.file.id);
-      if (snap?.tables) merged += await mergeIn(db, snap);
-      seen[a.file.id] = a.file.modifiedTime;
-    } else if (a.type === 'snapshot') {
+  for (const a of planPull(files, me, applied)) {
+    if (a.type === 'snapshot') {
       await mergeSnapshot(a.device, a.file);
     } else {
       if (applied[a.device] != null && a.seq <= applied[a.device]) continue; // the snapshot already had it
@@ -208,7 +196,6 @@ async function pull(db: SQLiteDatabase, me: string) {
   }
 
   await writeJson(db, 'drive_applied', applied);
-  await writeJson(db, 'drive_seen', seen);
   const newest = files.reduce((m, f) => (f.modifiedTime > m ? f.modifiedTime : m), since ?? '');
   if (newest) await setSetting(db, 'drive_listed_until', newest);
   return merged;
@@ -244,19 +231,19 @@ async function push(db: SQLiteDatabase, me: string) {
       });
     }
     seq += 1;
-    const body: Snapshot = { format: 3, exportedAt: Date.now(), deviceId: me, tables, clocks: packClocks(changed) };
+    const body: Snapshot = { kind: 'changes', exportedAt: Date.now(), deviceId: me, tables, clocks: packClocks(changed) };
     await Drive.upload(logName(me, seq), JSON.stringify(body), undefined, { name: deviceName() });
     // Saved straight away: a crash after the upload must not reuse this seq for different changes.
     await setSetting(db, 'drive_own_seq', String(seq));
     await setSetting(db, 'drive_up_clock', changed[changed.length - 1].hlc);
   }
 
-  // 2. A full snapshot: the first time (it also carries rows from before field clocks), then every 50 files.
+  // 2. A full snapshot: the first time, then every 50 change files.
   if (own && seq - own.seq < SNAPSHOT_EVERY) return;
   const tables: Record<string, Row[]> = {};
   for (const t of SYNCED_TABLES) tables[t] = await db.getAllAsync<Row>(`SELECT * FROM ${t}`);
   const clocks = packClocks(await db.getAllAsync<{ tbl: string; row_id: string; col: string; hlc: Clock }>('SELECT tbl, row_id, col, hlc FROM field_clock'));
-  const snap: Snapshot = { format: 2, exportedAt: Date.now(), deviceId: me, tables, clocks };
+  const snap: Snapshot = { kind: 'snapshot', exportedAt: Date.now(), deviceId: me, tables, clocks };
   // shortcut: the snapshot is the whole database (fine to a few MB, ~10k entries); it's only written every 50 change files.
   const props = { seq: String(seq), name: deviceName() };
   const existing = own?.id ?? (await Drive.findByName(snapshotName(me)))?.id;
@@ -320,7 +307,7 @@ export async function disconnectDrive(db: SQLiteDatabase) {
   await setSetting(db, 'drive_account', null);
   // What was read from this account. Kept: drive_own_seq, so this phone's next change file never reuses a number.
   await db.runAsync(
-    "DELETE FROM settings WHERE key LIKE 'drive_seen_%' OR key IN ('drive_seen', 'drive_applied', 'drive_listed_until', 'drive_own_snapshot')"
+    "DELETE FROM settings WHERE key IN ('drive_applied', 'drive_listed_until', 'drive_own_snapshot')"
   );
   setStatus({ state: 'off', account: null, error: null, detail: null });
 }

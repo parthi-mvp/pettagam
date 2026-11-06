@@ -24,13 +24,12 @@ export async function categoryBreakdown(db: SQLiteDatabase, from: number, to: nu
   );
 }
 
-/** Spending in a period by how it was paid (UPI, card, NEFT…); via null = not recorded (hand-made entries). */
+/** Spending in a period by how it was paid (UPI, card, bank transfer…); via null = not recorded (hand-made entries). */
 export const paymentMethods = (db: SQLiteDatabase, from: number, to: number) =>
   db.getAllAsync<{ via: string | null; total: number; count: number }>(
-    `SELECT CASE WHEN via IN ('neft', 'imps', 'rtgs', 'netbanking') THEN 'transfer' ELSE via END AS via,
-            SUM(amount) AS total, COUNT(*) AS count FROM transactions
+    `SELECT via, SUM(amount) AS total, COUNT(*) AS count FROM transactions
      WHERE deleted = 0 AND type = 'expense' AND date >= ? AND date < ?
-     GROUP BY 1 ORDER BY total DESC`,
+     GROUP BY via ORDER BY total DESC`,
     [from, to]
   );
 

@@ -61,7 +61,7 @@ export type Transaction = SyncedRow & {
   sms_hash: string | null; // dedupe key for SMS imports
   /** JSON array of tags ("Goa trip", "Reimbursable"), or null. Read and write through src/lib/tags.ts. */
   tags: string | null;
-  /** How the money moved, from the SMS: 'upi' | 'card' | 'neft' | … (Via in src/sms/parser.ts), or null. */
+  /** How the money moved, from the SMS: 'upi' | 'card' | 'transfer' | … (Via in src/sms/parser.ts), or null. */
   via: string | null;
 };
 

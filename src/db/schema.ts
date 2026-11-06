@@ -8,7 +8,12 @@ const SYNC_COLS = `
   updated_at INTEGER NOT NULL,
   deleted INTEGER NOT NULL DEFAULT 0`;
 
-/** Ordered migrations; index + 1 = schema version stored in PRAGMA user_version. */
+/**
+ * Ordered migrations; index + 1 = schema version stored in PRAGMA user_version. v1 is the whole
+ * schema. To change it in a later build, APPEND a step (never edit or reorder a shipped one), e.g.
+ * `ALTER TABLE accounts ADD COLUMN remind_days INTEGER;`. New columns must allow NULL (or have a
+ * DEFAULT); synced columns are never renamed or dropped (older phones still send them).
+ */
 const MIGRATIONS: string[] = [
   `
   CREATE TABLE accounts (${SYNC_COLS},
@@ -16,6 +21,8 @@ const MIGRATIONS: string[] = [
     type TEXT NOT NULL,
     institution TEXT,
     last4 TEXT,
+    card_last4 TEXT,
+    network TEXT,
     opening_balance REAL NOT NULL DEFAULT 0,
     credit_limit REAL,
     billing_day INTEGER,
@@ -24,7 +31,8 @@ const MIGRATIONS: string[] = [
   CREATE TABLE categories (${SYNC_COLS},
     name TEXT NOT NULL,
     kind TEXT NOT NULL,
-    color TEXT NOT NULL
+    color TEXT NOT NULL,
+    icon TEXT
   );
   CREATE TABLE transactions (${SYNC_COLS},
     account_id TEXT NOT NULL,
@@ -36,10 +44,13 @@ const MIGRATIONS: string[] = [
     merchant TEXT,
     note TEXT,
     source TEXT NOT NULL DEFAULT 'manual',
-    sms_hash TEXT
+    sms_hash TEXT,
+    tags TEXT,
+    via TEXT
   );
   CREATE INDEX idx_txn_date ON transactions(date);
   CREATE INDEX idx_txn_account ON transactions(account_id);
+  CREATE INDEX idx_txn_to_account ON transactions(to_account_id);
   CREATE INDEX idx_txn_sms ON transactions(sms_hash);
   CREATE TABLE investments (${SYNC_COLS},
     type TEXT NOT NULL,
@@ -63,39 +74,12 @@ const MIGRATIONS: string[] = [
     note TEXT
   );
   CREATE INDEX idx_inv_entry ON investment_entries(investment_id);
-  -- Local-only key/value settings (not synced): last sync time, SMS scan cursor, etc.
-  CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT);
-  `,
-  // v2 — the old upload queue ("outbox"). No longer used: field_clock (v10) says what changed.
-  // One entry per row; re-editing a queued row just bumps its seq.
-  `
-  CREATE TABLE outbox (
-    seq INTEGER PRIMARY KEY AUTOINCREMENT,
-    table_name TEXT NOT NULL,
-    row_id TEXT NOT NULL,
-    UNIQUE (table_name, row_id)
-  );
-  `,
-  // v3 — categories can carry a chosen icon (null = guess from the name).
-  `ALTER TABLE categories ADD COLUMN icon TEXT;`,
-  // v4 — a bank account's debit card digits: ATM and card alerts quote the card, not the account.
-  `ALTER TABLE accounts ADD COLUMN card_last4 TEXT;`,
-  // v5 — monthly budgets: category_id null = the overall budget.
-  `CREATE TABLE budgets (${SYNC_COLS},
+  -- Monthly budgets: category_id null = the overall budget.
+  CREATE TABLE budgets (${SYNC_COLS},
     category_id TEXT,
     amount REAL NOT NULL
-  );`,
-  // v6 — account balances match transfers by to_account_id too; without this they scan every transaction.
-  `CREATE INDEX idx_txn_to_account ON transactions(to_account_id);`,
-  // v7 — tags: a JSON array of labels that cut across categories (src/lib/tags.ts).
-  `ALTER TABLE transactions ADD COLUMN tags TEXT;`,
-  // v8 — how the money moved, read from the SMS (upi, card, neft…; src/sms/parser.ts).
-  `ALTER TABLE transactions ADD COLUMN via TEXT;`,
-  // v9 — a card's network (visa, mastercard, rupay…; src/catalog/networks.ts).
-  `ALTER TABLE accounts ADD COLUMN network TEXT;`,
-  // v10 — multi-device sync: the clock of each column's last write (src/sync/crdt.ts). Rows with no
-  // entry here count as written at their updated_at, so existing data needs no conversion.
-  `
+  );
+  -- Multi-device sync: the clock of each column's last write (src/sync/crdt.ts).
   CREATE TABLE field_clock (
     tbl TEXT NOT NULL,
     row_id TEXT NOT NULL,
@@ -103,9 +87,10 @@ const MIGRATIONS: string[] = [
     hlc TEXT NOT NULL,
     PRIMARY KEY (tbl, row_id, col)
   ) WITHOUT ROWID;
+  CREATE INDEX idx_field_clock_hlc ON field_clock(hlc);
+  -- Local-only key/value settings (not synced): sync state, SMS scan cursor, etc.
+  CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT);
   `,
-  // v11 — sync uploads "this phone's clocks newer than the last upload": an index keeps that quick.
-  `CREATE INDEX idx_field_clock_hlc ON field_clock(hlc);`,
 ];
 
 // Fixed ids so seeded categories are identical on every device and merge cleanly on sync.
@@ -113,9 +98,9 @@ export const seedCategoryId = (name: string) =>
   'cat-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
 /**
- * Default categories. updated_at = 0 so any real edit, on any device, wins over the seed.
- * Runs on every start: OR IGNORE keeps existing rows (even deleted ones), so it only adds defaults
- * that are new in this app version.
+ * Default categories, with fixed ids and no field clocks, so they're identical on every phone and any
+ * real edit wins over them. Runs on every start: OR IGNORE keeps existing rows (even deleted ones),
+ * so it only adds defaults that are new in this app version.
  */
 export async function seedCategories(db: SQLiteDatabase) {
   const now = Date.now();
@@ -124,8 +109,6 @@ export async function seedCategories(db: SQLiteDatabase) {
       'INSERT OR IGNORE INTO categories (id, created_at, updated_at, deleted, name, kind, color, icon) VALUES (?, ?, 0, 0, ?, ?, ?, ?)',
       [seedCategoryId(c.name), now, c.name, c.kind, c.color, c.icon]
     );
-    // Seeds from before icons existed: give untouched ones (updated_at still 0) their catalogue icon.
-    await db.runAsync('UPDATE categories SET icon = ? WHERE id = ? AND icon IS NULL AND updated_at = 0', [c.icon, seedCategoryId(c.name)]);
   }
 }
 
@@ -133,7 +116,9 @@ export async function migrate(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = OFF;');
   const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
   let version = row?.user_version ?? 0;
+  if (version > MIGRATIONS.length) throw new Error(`Database version ${version} is newer than this app (${MIGRATIONS.length})`);
 
+  const before = version;
   while (version < MIGRATIONS.length) {
     await db.withExclusiveTransactionAsync(async (txn) => {
       await txn.execAsync(MIGRATIONS[version]);
@@ -141,6 +126,8 @@ export async function migrate(db: SQLiteDatabase) {
     });
     version++;
   }
-  // After migrations, so the icon column (v3) exists.
+  // Updated to a version with new columns: read the other phones' snapshots again, once. While on the
+  // older version, this phone skipped columns it didn't have yet (src/sync/crdt.ts knownColumns).
+  if (before > 0 && version > before) await db.runAsync("DELETE FROM settings WHERE key IN ('drive_applied', 'drive_listed_until')");
   await db.withExclusiveTransactionAsync((txn) => seedCategories(txn));
 }
