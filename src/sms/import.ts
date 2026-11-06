@@ -4,7 +4,7 @@ import { toast } from 'sonner-native';
 import { aiSmsReady } from '@/ai/client';
 import { aiReadSms, aiSuggestCategoryAndTags } from '@/ai/features';
 import { emitChange } from '@/db/events';
-import { getSetting, listAccounts, listCategories, save, setSetting } from '@/db/repo';
+import { getSetting, listAccounts, listCategories, save, setSetting, smsTransactionId } from '@/db/repo';
 import { ensureCashAccount } from '@/db/cash';
 import { seedCategoryId } from '@/db/schema';
 import { isCardLike, type Account, type Category, type Transaction } from '@/db/types';
@@ -276,6 +276,8 @@ export async function importCandidates(db: SQLiteDatabase, items: SmsCandidate[]
       db,
       'transactions',
       {
+        id: smsTransactionId(c.hash),
+
         account_id: c.accountId,
         to_account_id: atm ? cashId : null,
         type: atm ? 'transfer' : c.type,
@@ -326,6 +328,8 @@ async function importCardPayment(db: SQLiteDatabase, c: SmsCandidate, accounts: 
     db,
     'transactions',
     {
+      id: smsTransactionId(c.hash),
+
       account_id: from.id,
       to_account_id: card.id,
       type: 'transfer',

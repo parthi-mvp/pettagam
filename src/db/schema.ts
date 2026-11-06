@@ -93,6 +93,17 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE transactions ADD COLUMN via TEXT;`,
   // v9 — a card's network (visa, mastercard, rupay…; src/catalog/networks.ts).
   `ALTER TABLE accounts ADD COLUMN network TEXT;`,
+  // v10 — multi-device sync: the clock of each column's last write (src/sync/crdt.ts). Rows with no
+  // entry here count as written at their updated_at, so existing data needs no conversion.
+  `
+  CREATE TABLE field_clock (
+    tbl TEXT NOT NULL,
+    row_id TEXT NOT NULL,
+    col TEXT NOT NULL,
+    hlc TEXT NOT NULL,
+    PRIMARY KEY (tbl, row_id, col)
+  ) WITHOUT ROWID;
+  `,
 ];
 
 // Fixed ids so seeded categories are identical on every device and merge cleanly on sync.

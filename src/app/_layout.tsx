@@ -13,6 +13,7 @@ import { AppToaster } from '@/components/ui';
 import { StackHeader } from '@/components/ui/StackHeader';
 import { startupFonts } from '@/constants/fonts';
 import { normalizeCategoryIcons } from '@/db/category-icons';
+import { mergeDuplicates } from '@/db/dedupe';
 import { migrate } from '@/db/schema';
 import { useTheme } from '@/hooks/use-theme';
 import { AutoSync } from '@/sync/auto-sync';
@@ -37,6 +38,8 @@ async function initDatabase(db: SQLiteDatabase) {
     await migrate(db);
     // Old category icons → the one icon set, stored (and synced) once; a no-op after that.
     await normalizeCategoryIcons(db).catch((e) => console.warn('category icons', e));
+    // Same SMS or category made on two phones before ids were shared: keep one.
+    await mergeDuplicates(db).catch((e) => console.warn('duplicates', e));
   } finally {
     SplashScreen.hideAsync();
   }

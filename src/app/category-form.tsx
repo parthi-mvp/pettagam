@@ -9,7 +9,7 @@ import { toast } from 'sonner-native';
 import { CategoryFields } from '@/components/category-fields';
 import { categoryIcon, type AnyIcon } from '@/components/icons';
 import { Button, Screen, Text } from '@/components/ui';
-import { getById, listCategories, save, softDelete } from '@/db/repo';
+import { getById, listCategories, newCategoryId, save, softDelete } from '@/db/repo';
 import type { CategoryKind } from '@/db/types';
 import { haptic } from '@/lib/haptics';
 
@@ -42,7 +42,7 @@ export default function CategoryForm() {
     if (!n) return Alert.alert('Enter a name', 'e.g. "Pets", "Gifts" or "Side income"');
     const clash = (await listCategories(db)).find((c) => c.kind === kind && c.id !== params.id && c.name.toLowerCase() === n.toLowerCase());
     if (clash) return Alert.alert('Already exists', `There’s already a ${kind} category called “${clash.name}”.`);
-    await save(db, 'categories', { id: params.id, name: n, kind, color, icon });
+    await save(db, 'categories', { id: params.id ?? (await newCategoryId(db, kind, n)), name: n, kind, color, icon });
     haptic.success();
     toast.success(params.id ? 'Category saved' : `${n} added`);
     router.back();

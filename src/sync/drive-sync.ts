@@ -1,19 +1,26 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
+import { deviceId, observeClock, stampFields } from '@/db/clock';
+import { mergeDuplicates } from '@/db/dedupe';
 import { emitChange } from '@/db/events';
 import { getSetting, setSetting, upsertRaw } from '@/db/repo';
 import { SYNCED_TABLES } from '@/db/types';
 
+import { mergeRow, packClocks, unpackRow, type Clock, type PackedClocks, type Row } from './crdt';
 import * as Drive from './drive';
 import { describeSyncError } from './errors';
-import { mergeTable, type Row, type Snapshot } from './merge';
+
+/** A phone's backup file. Format 2 adds each column's clock; format 1 (older app) has rows only. */
+type Snapshot = { format: 1 | 2; exportedAt: number; deviceId: string; tables: Record<string, Row[]>; clocks?: PackedClocks };
 
 /**
  * Backup and multi-device sync through the user's own Google Drive (hidden app folder), no server.
  *
- * Each phone writes ONE file, pettagam-<device>.json: a full snapshot of its database, soft-deleted
- * rows included so deletions travel too. A sync reads the other phones' files that changed since it
- * last looked, merges them in (newest row wins, the same rule as before), then rewrites its own file.
+ * Each phone writes ONE file, pettagam-<device>.json: a full snapshot of its database with the clock
+ * of every column, soft-deleted rows included so deletions travel too. A sync reads the other phones'
+ * files that changed since it last looked and merges them in column by column (src/sync/crdt.ts: the
+ * latest write to each field wins, so edits to different fields of one entry both survive), then
+ * rewrites its own file.
  * Phones never write the same file, so no upload can overwrite another phone's edits.
  * The outbox table marks "changed since the last upload".
  */
@@ -63,29 +70,37 @@ export async function refreshPending(db: SQLiteDatabase) {
   });
 }
 
-/** A stable id for this install, so its file name never changes. */
-async function deviceId(db: SQLiteDatabase) {
-  let id = await getSetting(db, 'device_id');
-  if (!id) {
-    id = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-    await setSetting(db, 'device_id', id);
-  }
-  return id;
-}
-
-/** Apply other phones' rows that are new here or newer. Returns how many rows changed. */
+/** Merge another phone's snapshot in, field by field. Returns how many rows changed here. */
 async function mergeIn(db: SQLiteDatabase, snap: Snapshot) {
   let changed = 0;
+  let newest: Clock | null = null;
   await db.withExclusiveTransactionAsync(async (txn) => {
     for (const table of SYNCED_TABLES) {
-      const remote = snap.tables[table];
-      if (!remote?.length) continue;
-      const local = await txn.getAllAsync<Row>(`SELECT id, updated_at FROM ${table}`);
-      const { toApplyLocally } = mergeTable(local, remote);
-      for (const row of toApplyLocally) await upsertRaw(txn, table, row);
-      changed += toApplyLocally.length;
+      const remoteRows = snap.tables[table];
+      if (!remoteRows?.length) continue;
+      const localRows = new Map((await txn.getAllAsync<Row>(`SELECT * FROM ${table}`)).map((r) => [r.id, r]));
+      const localClocks = new Map<string, Record<string, Clock>>();
+      for (const c of await txn.getAllAsync<{ row_id: string; col: string; hlc: Clock }>('SELECT row_id, col, hlc FROM field_clock WHERE tbl = ?', [table])) {
+        (localClocks.get(c.row_id) ?? localClocks.set(c.row_id, {}).get(c.row_id)!)[c.col] = c.hlc;
+      }
+      for (const remote of remoteRows) {
+        const local = localRows.get(remote.id);
+        const m = mergeRow(local ? { row: local, clocks: localClocks.get(remote.id) ?? {} } : null, {
+          row: remote,
+          clocks: unpackRow(snap.clocks, table, remote),
+        });
+        if (!m) continue;
+        // A new row goes in whole; an existing one gets only the columns that won.
+        await upsertRaw(txn, table, local ? { ...local, ...m.patch } : { ...remote, ...m.patch });
+        for (const [col, c] of Object.entries(m.clocks)) {
+          await stampFields(txn, table, remote.id, [col], c);
+          if (!newest || c > newest) newest = c;
+        }
+        changed++;
+      }
     }
   });
+  if (newest) await observeClock(db, newest);
   return changed;
 }
 
@@ -119,10 +134,14 @@ async function run(db: SQLiteDatabase) {
       const key = `drive_seen_${f.id}`;
       if ((await getSetting(db, key)) === f.modifiedTime) continue;
       const snap = await Drive.download<Snapshot>(f.id);
-      if (snap?.format === 1 && snap.tables) merged += await mergeIn(db, snap);
+      if ((snap?.format === 1 || snap?.format === 2) && snap.tables) merged += await mergeIn(db, snap);
       await setSetting(db, key, f.modifiedTime);
     }
-    if (merged) emitChange('*');
+    // Another phone may have made the same SMS entry or category before ids were shared.
+    if (merged) {
+      await mergeDuplicates(db);
+      emitChange('*');
+    }
 
     // 2. Push: rewrite this phone's file when something changed here (or it's the first backup).
     // Rows edited during the upload get a newer outbox entry (higher rowid) and stay queued.
@@ -130,7 +149,8 @@ async function run(db: SQLiteDatabase) {
     if (!own || mark > 0 || merged > 0) {
       const tables: Record<string, Row[]> = {};
       for (const t of SYNCED_TABLES) tables[t] = await db.getAllAsync<Row>(`SELECT * FROM ${t}`);
-      const snap: Snapshot = { format: 1, exportedAt: Date.now(), deviceId: me, tables };
+      const clocks = packClocks(await db.getAllAsync<{ tbl: string; row_id: string; col: string; hlc: Clock }>('SELECT tbl, row_id, col, hlc FROM field_clock'));
+      const snap: Snapshot = { format: 2, exportedAt: Date.now(), deviceId: me, tables, clocks };
       // shortcut: uploads the whole database each time (fine to a few MB, ~10k entries); send changes only if it grows past that.
       await Drive.upload(me, JSON.stringify(snap), own?.id);
       await db.runAsync('DELETE FROM outbox WHERE rowid <= ?', [mark]);

@@ -5,6 +5,9 @@ import { CATEGORY_COLORS } from '@/catalog/categories';
 import { parseDetails, type ChitDetails } from '@/lib/invest';
 import { parseTags, replaceTag, tagsColumn } from '@/lib/tags';
 
+import { changedColumns } from '@/sync/crdt';
+
+import { nextClock, stampFields } from './clock';
 import { emitChange } from './events';
 import type {
   Account,
@@ -33,7 +36,10 @@ type RowOf<T extends TableName> = T extends 'accounts'
 
 export type NewRow<T extends TableName> = Omit<RowOf<T>, keyof SyncedRow> & Partial<Pick<SyncedRow, 'id'>>;
 
-/** Insert or update a row; stamps updated_at so the change wins on the next sync. */
+/**
+ * Insert or update a row. Each column that actually changed gets a fresh clock (field_clock), so
+ * another phone's edit to a different column of the same row survives the merge (src/sync/crdt.ts).
+ */
 export async function save<T extends TableName>(
   db: SQLiteDatabase,
   table: T,
@@ -42,7 +48,7 @@ export async function save<T extends TableName>(
 ): Promise<string> {
   const now = Date.now();
   const id = data.id ?? Crypto.randomUUID();
-  const existing = await db.getFirstAsync<{ created_at: number }>(`SELECT created_at FROM ${table} WHERE id = ?`, [id]);
+  const existing = await db.getFirstAsync<Record<string, unknown> & { created_at: number }>(`SELECT * FROM ${table} WHERE id = ?`, [id]);
   const row: Record<string, unknown> = {
     ...data,
     id,
@@ -52,11 +58,32 @@ export async function save<T extends TableName>(
   };
   // Queued before the write (a crash in between must not leave an edit that never uploads) and again
   // after it (a new seq, so an upload that read the old row can't clear the queue entry).
+  const cols = changedColumns(existing, row);
+  if (existing && cols.length === 0) return id; // nothing changed: no clock, nothing to back up
   await enqueue(db, table, id);
   await upsertRaw(db, table, row);
+  await stampFields(db, table, id, cols, await nextClock(db));
   await enqueue(db, table, id);
   if (!opts.silent) emitChange(table);
   return id;
+}
+
+/**
+ * One id per SMS, the same on every phone: the same alert imported on two phones is one entry after
+ * sync, not two.
+ */
+export const smsTransactionId = (smsHash: string) => `sms-${smsHash}`;
+
+/**
+ * An id for a new category from its kind and name, the same on every phone, so "Pets" made on two
+ * phones merges into one. Expense ids match the seeded ones (cat-<name>). Undefined (a random id) when
+ * the name has no letters or digits, or that id is already taken by a category since renamed.
+ */
+export async function newCategoryId(db: SQLiteDatabase, kind: Category['kind'], name: string): Promise<string | undefined> {
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  if (!slug) return undefined;
+  const id = kind === 'income' ? `cat-in-${slug}` : `cat-${slug}`;
+  return (await db.getFirstAsync('SELECT 1 FROM categories WHERE id = ?', [id])) ? undefined : id;
 }
 
 /** Mark a row as changed since the last Drive backup. Called for every local edit (not for rows merged in from Drive). */
@@ -64,7 +91,7 @@ export async function enqueue(db: SQLiteDatabase, table: TableName, id: string) 
   await db.runAsync('INSERT OR REPLACE INTO outbox (table_name, row_id) VALUES (?, ?)', [table, id]);
 }
 
-/** Write a row exactly as given (used by sync merge — keeps the remote updated_at). */
+/** Write a row exactly as given, without clocks (sync merge stamps the remote clocks itself). */
 export async function upsertRaw(db: SQLiteDatabase, table: TableName, row: Record<string, unknown>) {
   const cols = Object.keys(row);
   const placeholders = cols.map(() => '?').join(', ');
@@ -76,8 +103,10 @@ export async function upsertRaw(db: SQLiteDatabase, table: TableName, row: Recor
 }
 
 export async function softDelete(db: SQLiteDatabase, table: TableName, id: string) {
+  const clock = await nextClock(db);
   await enqueue(db, table, id); // before and after, as in save()
   await db.runAsync(`UPDATE ${table} SET deleted = 1, updated_at = ? WHERE id = ?`, [Date.now(), id]);
+  await stampFields(db, table, id, ['deleted'], clock);
   await enqueue(db, table, id);
   if (table === 'investments') {
     const entries = await db.getAllAsync<{ id: string }>(
@@ -88,7 +117,10 @@ export async function softDelete(db: SQLiteDatabase, table: TableName, id: strin
       Date.now(),
       id,
     ]);
-    for (const e of entries) await enqueue(db, 'investment_entries', e.id);
+    for (const e of entries) {
+      await stampFields(db, 'investment_entries', e.id, ['deleted'], clock);
+      await enqueue(db, 'investment_entries', e.id);
+    }
   }
   emitChange(table);
 }
@@ -312,7 +344,7 @@ export async function createCategory(
     return save(db, 'categories', { ...row, ...look });
   }
   const count = await db.getFirstAsync<{ n: number }>('SELECT COUNT(*) AS n FROM categories WHERE deleted = 0');
-  return save(db, 'categories', { name: n, kind, color: look?.color ?? CATEGORY_COLORS[(count?.n ?? 0) % CATEGORY_COLORS.length], icon: look?.icon ?? null });
+  return save(db, 'categories', { id: await newCategoryId(db, kind, n), name: n, kind, color: look?.color ?? CATEGORY_COLORS[(count?.n ?? 0) % CATEGORY_COLORS.length], icon: look?.icon ?? null });
 }
 
 /** Patch every live transaction matching `where` through save(), so each change is stamped and synced. */
