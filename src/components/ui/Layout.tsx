@@ -1,6 +1,6 @@
 import { EmptyArt, type EmptyArtKind } from '../empty-art';
 import type { ComponentProps, ReactNode } from 'react';
-import { Pressable, ScrollView, View, type ViewProps } from 'react-native';
+import { Pressable, ScrollView, useWindowDimensions, View, type ViewProps } from 'react-native';
 import { KeyboardAwareScrollView, KeyboardStickyView } from 'react-native-keyboard-controller';
 import { withUniwind } from 'uniwind';
 import { tv, type VariantProps } from 'tailwind-variants';
@@ -256,14 +256,17 @@ export function Divider({ className }: { className?: string }) {
 
 /** An empty list: an illustration of what will be here (src/components/empty-art.tsx), a line, and the action that fills it. */
 export function Empty({ text, action, art }: { text: string; action?: ReactNode; art?: EmptyArtKind }) {
+  // Flat on the page, no card. With an illustration it's the page's one moment: centred in the
+  // space below the header (most of the screen), not stuck to the top.
+  const { height } = useWindowDimensions();
   return (
-    <Card className="items-center gap-4 py-8">
+    <View className={art ? 'items-center justify-center gap-5 px-4 py-6' : 'items-center gap-4 px-4 py-8'} style={art ? { minHeight: height * 0.56 } : undefined}>
       {art ? <EmptyArt kind={art} /> : null}
-      <Text variant="muted" className="text-center">
+      <Text variant="muted" className="max-w-[320px] text-center">
         {text}
       </Text>
       {action}
-    </Card>
+    </View>
   );
 }
 
