@@ -59,7 +59,7 @@ export async function save<T extends TableName>(
   return id;
 }
 
-/** Queue a row for upload to Neon. Called for every local edit (not for rows pulled from the server). */
+/** Mark a row as changed since the last Drive backup. Called for every local edit (not for rows merged in from Drive). */
 export async function enqueue(db: SQLiteDatabase, table: TableName, id: string) {
   await db.runAsync('INSERT OR REPLACE INTO outbox (table_name, row_id) VALUES (?, ?)', [table, id]);
 }

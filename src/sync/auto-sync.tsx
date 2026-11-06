@@ -3,26 +3,25 @@ import { useEffect } from 'react';
 import NetInfo from '@react-native-community/netinfo';
 import { AppState } from 'react-native';
 
-import { useAuth } from '@/auth/session';
 import { onDataChange } from '@/db/events';
 
-import { refreshPending, syncNow } from './neon-sync';
+import { refreshPending, syncNow } from './drive-sync';
 
-const AFTER_EDIT_MS = 3_000;
-const WHILE_OPEN_MS = 5 * 60_000;
+// Each upload is the whole database, so let a burst of edits settle first.
+const AFTER_EDIT_MS = 20_000;
+// While open: look for other phones' changes now and then (a cheap file list when nothing changed).
+const WHILE_OPEN_MS = 10 * 60_000;
 
 /**
- * Keeps the cache and Neon in step while signed in:
+ * Keeps this phone and its Google Drive backup in step (a no-op until Drive is connected):
  * on open, on return to foreground, on leaving the app, a few seconds after any edit,
  * every 5 minutes while open, and as soon as the internet comes back.
  * Offline failures are quiet; the outbox keeps the edits.
  */
 export function AutoSync() {
   const db = useSQLiteContext();
-  const { status } = useAuth();
 
   useEffect(() => {
-    if (status !== 'signedIn') return;
     const run = () => syncNow(db).catch(() => {});
     let debounce: ReturnType<typeof setTimeout> | undefined;
 
@@ -55,7 +54,7 @@ export function AutoSync() {
       clearInterval(interval);
       unsubscribeNet();
     };
-  }, [db, status]);
+  }, [db]);
 
   return null;
 }

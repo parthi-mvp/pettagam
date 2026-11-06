@@ -7,7 +7,7 @@ An offline-first mobile app (Expo / React Native) for tracking:
 - **Investments**: FD, RD, chit funds, stocks, mutual funds, gold, PPF/EPF/NPS, bonds, real estate, crypto and others
 - **Auto entries from bank SMS** (Android): reads debit/credit/card/UPI alerts and turns them into transactions you review before importing
 - **Reports & analysis**: category breakdown, 6-month income vs expense, top merchants, net worth, investment allocation, plain-language insights, CSV export
-- **Neon cloud account with offline cache**: your data lives in Neon Postgres and is cached on the phone, so the app keeps working offline and edits upload when you're back online
+- **No account, no server**: your data lives on the phone (SQLite). Optional backup and multi-device sync through your own Google Drive (a hidden app folder)
 
 ## Tech stack
 
@@ -15,13 +15,13 @@ An offline-first mobile app (Expo / React Native) for tracking:
 |---|---|---|
 | App framework | **Expo SDK 58**, React Native 0.88, TypeScript | One codebase for Android and iOS, with EAS cloud builds |
 | Navigation | **Expo Router** (native tabs and stack) | File-based routes in `src/app/` |
-| Backend | **Neon**: Postgres, Neon Auth (Better Auth), Data API (PostgREST) | No server code to run. Row-Level Security keeps each user's rows private |
-| Offline cache | **expo-sqlite** (SQLite, WAL) plus an outbox of queued edits | Opens and works offline. Reports run on the local copy |
+| Storage | **expo-sqlite** on the phone; optional backup to the user's own Google Drive (`drive.appdata`) | No backend to run or pay for; nothing leaves the phone except to the user's Drive |
+| Change tracking | An outbox of rows edited since the last backup | Back up only when something changed |
 | State | The SQLite cache plus a small `useLiveQuery` hook | No Redux/Zustand to keep in step |
 | SMS reading | Local Expo native module `modules/sms-reader` (Kotlin, `content://sms/inbox`) | Supports the new architecture, with no unmaintained third-party library |
 | SMS parsing | Pure TypeScript regex parser `src/sms/parser.ts` | Runs on the device and is unit-tested |
-| Auth | Neon Auth email + password, session cookie kept in the device keychain (`expo-secure-store`) | Calls the REST endpoints directly; the browser SDK doesn't fit React Native |
-| Sync | Upload the outbox, then pull rows with `rev` above this phone's cursor. The server keeps the later edit | Neon is the source of truth, so the phone never merges whole databases |
+| Auth | None. Google Sign-In only to reach Drive, when backup is turned on | No sign-up wall for a finance app |
+| Sync | Each phone writes its own `pettagam-<device>.json` (full snapshot, soft deletes included) and merges the others' files, newest row wins | Phones never write the same file, so no edit is lost |
 | Charts | Lightweight View-based bars | No extra native chart dependencies |
 | Builds | **EAS Build** (`eas.json` has development, preview and production profiles) | No need for local Android Studio |
 
@@ -59,27 +59,20 @@ src/
     investment-form.tsx   any investment type (chit-specific fields, FD interest calc)
     investment/[id].tsx   holdings detail, entries (buy/SIP/installment/sell/payout/dividend), revalue
     sms-import.tsx        scan inbox → review → import
-    settings.tsx          account, sync status, one-time Drive import, sign out
-    sign-in.tsx           Neon Auth sign in / sign up
+    settings/sync.tsx     Google Drive backup: connect, back up now, status, stop
   db/                     schema + migrations, repository, live queries
   sms/                    parser + import (account matching by last 4 digits, dedupe)
-  auth/                   Neon Auth client (session in SecureStore, JWT for the Data API)
-  sync/                   Neon sync engine (outbox → Data API, incremental pull), auto-sync,
-                          one-time Google Drive import (drive.ts, merge.ts, drive-import.ts)
+  sync/                   Drive backup and sync (drive.ts client, drive-sync.ts engine, merge.ts), auto-sync
   reports/analytics.ts    report queries, insights, CSV export
 modules/sms-reader/       Android native module (Kotlin)
-neon/migrations/          Postgres schema, RLS policies, last-write-wins trigger, balances view
-neon/test/                SQL tests against a local Postgres (npm run test:db)
-tests/                    unit tests: SMS parser, Drive merge, Neon wire helpers (node --test)
+tests/                    unit tests: SMS parser, merge, reports, sync errors (node --test)
 ```
 
 ## Getting started
 
 ```bash
 npm install
-cp .env.example .env   # fill in your Neon URLs (see below)
 npm test            # unit tests
-npm run test:db     # schema/RLS tests (needs a local Postgres)
 npm run typecheck
 npx expo lint
 ```
@@ -95,29 +88,22 @@ npx expo start --dev-client                          # then open the app on the 
 
 If Android Studio is installed locally, you can run `npx expo run:android` instead.
 
-## Neon setup (one time)
+## Google Drive backup (one time setup)
 
-1. Create a project at [neon.com](https://neon.com). Pick the **AWS Asia Pacific (Singapore)** region, the closest to India.
-2. Apply the schema. In the Neon SQL editor (or with `psql "$DATABASE_URL"`), run the files in `neon/migrations/` in order. `0002` removes the DELETE permission that enabling the Data API grants automatically.
-   - **Enable Neon Auth and the Data API first** (step 3). The schema uses the `authenticated` role and the `auth.user_id()` function, which they provide.
-3. Turn on the services. In the Console, open your project:
-   - **Auth**: enable it and keep **Email & password** on.
-   - **Data API**: enable it on the `neondb` database and choose **Neon Auth** as the JWT provider.
-4. Copy the **Auth URL** and the **Data API URL** into `.env` as `EXPO_PUBLIC_NEON_AUTH_URL` and `EXPO_PUBLIC_NEON_DATA_API_URL` (see `.env.example`). If the Console only shows the JWKS URL, the Data API URL follows the Auth URL's pattern with `neonauth` → `apirest` and `/auth` → `/rest/v1`. These URLs are public; access is controlled by each user's token and Postgres row-level security.
-5. Restart `npx expo start --dev-client`, then create an account in the app.
+Backup is optional; the app works fully without it. To enable it in your builds:
 
-How data flows:
+1. In [Google Cloud Console](https://console.cloud.google.com), create a project and enable the **Google Drive API**.
+2. **OAuth consent screen**: add the scope `https://www.googleapis.com/auth/drive.appdata`. While in *Testing*, add your Google account as a test user.
+3. **Credentials → Create OAuth client → Android**, once per app id you install: `com.pettagam.app.dev`, `com.pettagam.app.preview`, `com.pettagam.app`, each with the SHA-1 of the keystore that signs it (`eas credentials` shows it for EAS builds).
+4. Rebuild isn't needed for this; the Google Sign-In module is already in the app.
 
-- **Editing.** Every edit is saved on the phone first and queued in the outbox. A few seconds later, and on app open or close, the queue is uploaded to the Data API.
-- **Pulling.** Changes made on other devices are pulled using a server sequence number (`rev`), so each sync only downloads what changed.
-- **Conflicts.** If two devices edit the same entry while offline, a Postgres trigger keeps the later edit.
-- **Deletes.** Deletes are soft, so they reach every device. The app's database role cannot hard-delete rows.
-- **Signing in.** Signing in needs internet once; after that the app opens offline.
-- **Signing out.** Signing out removes the phone's copy. The app warns you if edits haven't uploaded yet.
+How it works:
 
-### Moving from the Google Drive version
-
-Data from the earlier Drive-sync build is kept: on the first sign-in, everything already on the phone is uploaded to your account. To pull in a Drive backup from another phone, use **Settings → Import from Google Drive**. That only needs the Google OAuth client from the old setup (package `com.pettagam.app`, scope `drive.appdata`). It will be removed in a later release.
+- **Saving.** Every edit is saved on the phone and marked in the outbox. About 20 seconds later, and when the app opens or goes to the background, the phone uploads a full snapshot to its own file in the Drive app folder.
+- **Other phones.** Each sync lists the backup files; any other phone's file that changed is downloaded and merged in, keeping the newer copy of each entry.
+- **Deletes.** Deletes are soft, so they reach every phone.
+- **New phone.** Install, tap *Restore from Google Drive* on the welcome screen (or More → Backup) and connect the same account.
+- **Privacy.** The app folder is hidden and private to Pettagam; it can't see the user's other Drive files.
 
 ## SMS auto-entry
 
@@ -139,9 +125,7 @@ Data from the earlier Drive-sync build is kept: on the first sign-in, everything
 
 ## Roadmap ideas
 
-- Receipts and statements in Neon Object Storage (upload links from a Neon Function)
-- Daily mutual fund NAV and gold price refresh as a scheduled Neon Function
-- Email OTP / Google sign-in through Neon Auth
+- Daily mutual fund NAV and gold price refresh
 - Background SMS listener (auto-import on arrival) and a notification to review new entries
 - Budgets per category with alerts
 - Live NAV / stock / gold prices (AMFI NAV file, an exchange API)

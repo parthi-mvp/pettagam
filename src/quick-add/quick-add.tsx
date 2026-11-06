@@ -18,7 +18,7 @@ import { TagField } from '@/components/tag-field';
 import { Button, Field, IconTile, SegmentedControl, Text } from '@/components/ui';
 import { startupFonts } from '@/constants/fonts';
 import { useThemePreference } from '@/theme/themePreference';
-import { getSetting, listAccounts, listCategories } from '@/db/repo';
+import { listAccounts, listCategories } from '@/db/repo';
 import { migrate } from '@/db/schema';
 import type { Account, Category } from '@/db/types';
 import { money } from '@/lib/format';
@@ -26,7 +26,7 @@ import { haptic } from '@/lib/haptics';
 import { aiTagSms, buildCandidates, importCandidates, type SmsCandidate } from '@/sms/import';
 import { aiReady, useAi } from '@/ai/client';
 import type { RawSms } from '@/sms/parser';
-import { syncNow } from '@/sync/neon-sync';
+import { syncNow } from '@/sync/drive-sync';
 import { useThemeColors } from '@/theme/useThemeColor';
 
 export type QuickAddProps = { address: string; body: string; date: number };
@@ -108,8 +108,8 @@ function QuickAddCard({ address, body, date }: QuickAddProps) {
       if (fresh) await importCandidates(db, [{ ...item, sms, hash: fresh.hash, selected: true }]);
       haptic.success();
       setSaved(true);
-      // Upload now if signed in; otherwise it goes up the next time the app syncs.
-      if (await getSetting(db, 'cache_owner')) syncNow(db).catch(() => {});
+      // Back up now if Drive is connected (a no-op otherwise); offline, it goes up next time.
+      syncNow(db).catch(() => {});
       setTimeout(closeQuickAdd, 700);
     } catch {
       haptic.error();

@@ -1,4 +1,3 @@
-import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useRef, useState, type ReactNode } from 'react';
 import { Pressable, useWindowDimensions, View } from 'react-native';
@@ -13,7 +12,7 @@ import { useThemeColors } from '@/theme/useThemeColor';
 
 type Slide = { title: string; body: string; art: ReactNode };
 
-/** First launch: what Pettagam is, in four swipes, then sign-in. Shown once per phone. */
+/** First launch: what Pettagam is, in four swipes, then straight in (no account). Shown once per install. */
 export default function Welcome() {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -41,7 +40,7 @@ export default function Welcome() {
     },
     {
       title: 'Private\nby design',
-      body: 'Your data stays on your phone and syncs only to your own account. It works offline too.',
+      body: 'No account, no server. Your data stays on your phone, backed up only to your own Google Drive if you choose.',
       art: <PrivateArt />,
     },
   ];
@@ -52,11 +51,10 @@ export default function Welcome() {
   });
 
   const goTo = (i: number) => listRef.current?.scrollTo({ x: i * width, animated: true });
-  const finish = (mode: 'signIn' | 'signUp') => {
+  // Marking it seen swaps the welcome stack for the app (Routes); Home then opens Backup for "restore".
+  const finish = (restore: boolean) => {
     haptic.light();
-    // Seen first: sign-in sends unseen phones back here.
-    markSeen();
-    router.replace({ pathname: '/sign-in', params: { mode } });
+    markSeen(restore);
   };
 
   return (
@@ -130,16 +128,16 @@ export default function Welcome() {
         <PressableScale
           haptic="light"
           accessibilityRole="button"
-          onPress={() => (last ? finish('signUp') : goTo(page + 1))}
+          onPress={() => (last ? finish(false) : goTo(page + 1))}
           className="h-12 flex-row items-center justify-center gap-2 rounded-button bg-white">
           <Text weight="semibold" className="text-xl text-hero">
-            {last ? 'Create your account' : 'Next'}
+            {last ? 'Get started' : 'Next'}
           </Text>
           <Icon name="arrowRight" size={18} color={heroInk} strokeWidth={2.2} />
         </PressableScale>
-        <Pressable onPress={() => finish('signIn')} hitSlop={8} accessibilityRole="button" className="items-center py-1 active:opacity-60">
+        <Pressable onPress={() => finish(true)} hitSlop={8} accessibilityRole="button" className="items-center py-1 active:opacity-60">
           <Text variant="label" className="text-on-hero-soft">
-            I already have an account
+            Restore from Google Drive
           </Text>
         </Pressable>
       </View>
@@ -258,7 +256,7 @@ function PrivateArt() {
   const [accent] = useThemeColors(['brass'] as const);
   const points: { icon: IconName; text: string }[] = [
     { icon: 'sms', text: 'SMS read on the phone' },
-    { icon: 'sync', text: 'Synced only to your account' },
+    { icon: 'sync', text: 'Backed up only to your own Google Drive' },
     { icon: 'lock', text: 'Works offline' },
   ];
   return (

@@ -1,11 +1,15 @@
+import Storage from 'expo-sqlite/kv-store';
 import { create } from 'zustand';
 
-/**
- * Whether the user has gone past the welcome screens in this signed-out session. In memory only:
- * every launch while signed out, and every sign-out, starts at the welcome screens again
- * (Routes resets it on sign-in). Signed-in users never see them.
- */
-export const useWelcomeSeen = create<{ seen: boolean; markSeen: () => void }>((set) => ({
-  seen: false,
-  markSeen: () => set({ seen: true }),
+const KEY = 'welcome_done';
+
+/** Whether this phone has been through the welcome screens. Once per install; read before the first frame. */
+export const useWelcomeSeen = create<{ seen: boolean; restore: boolean; markSeen: (restore?: boolean) => void }>((set) => ({
+  seen: Storage.getItemSync(KEY) === '1',
+  /** "Restore from Google Drive" was tapped: Home opens Backup once the app has mounted. */
+  restore: false,
+  markSeen: (restore = false) => {
+    Storage.setItemSync(KEY, '1');
+    set({ seen: true, restore });
+  },
 }));

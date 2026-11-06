@@ -1,75 +1,133 @@
 import { useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useState } from 'react';
-import { Alert } from 'react-native';
+import { Alert, View } from 'react-native';
 
+import { Icon } from '@/components/icons';
 import { Button, FormSection, Screen, Text } from '@/components/ui';
-import { importFromDrive } from '@/sync/drive-import';
-import { getSyncStatus, onSyncStatus, refreshPending, syncNow, type SyncStatus } from '@/sync/neon-sync';
+import { toast } from 'sonner-native';
+import { haptic } from '@/lib/haptics';
+import { connectDrive, disconnectDrive, getSyncStatus, onSyncStatus, refreshPending, syncNow, type SyncStatus } from '@/sync/drive-sync';
+import { describeSyncError } from '@/sync/errors';
+import { useThemeColors } from '@/theme/useThemeColor';
 
-const STATE_LABEL: Record<SyncStatus['state'], string> = {
-  idle: 'Up to date',
-  syncing: 'Syncing…',
-  offline: 'Offline. Changes will upload when you’re back online',
-  error: 'Sync problem',
+const ago = (t: number | null) => {
+  if (!t) return 'never';
+  const m = Math.round((Date.now() - t) / 60_000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m} min ago`;
+  if (m < 60 * 24) return `${Math.round(m / 60)} h ago`;
+  return new Date(t).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 };
 
-export default function SyncSettings() {
+/**
+ * Backup: data lives on this phone; Google Drive (the user's own, hidden app folder) is the optional
+ * backup and the way to move to a new phone or use two. No Pettagam account or server.
+ */
+export default function BackupSettings() {
   const db = useSQLiteContext();
   const [sync, setSync] = useState<SyncStatus>(getSyncStatus());
   const [busy, setBusy] = useState(false);
+  const [success, warning, muted] = useThemeColors(['success-fg', 'warning-fg', 'fg-muted'] as const);
 
   useEffect(() => {
     refreshPending(db);
     return onSyncStatus(setSync);
   }, [db]);
 
-  const syncButton = () => syncNow(db).catch(() => {});
+  const report = (e: unknown) => {
+    const { offline, message } = describeSyncError(e instanceof Error ? e.message : String(e));
+    haptic.error();
+    toast.error(offline ? 'You’re offline' : 'Couldn’t back up', { description: offline ? 'Connect to the internet and try again.' : (message ?? undefined) });
+  };
 
-  const driveImport = async () => {
+  const connect = async () => {
     setBusy(true);
     try {
-      const n = await importFromDrive(db);
-      Alert.alert('Drive import', n ? `${n} record(s) imported and queued for upload.` : 'Nothing new found in Drive.');
-      syncButton();
+      const email = await connectDrive(db);
+      if (email) {
+        haptic.success();
+        toast.success('Backing up to Google Drive', { description: email });
+      }
     } catch (e) {
-      Alert.alert('Drive import failed', String(e));
+      report(e);
     } finally {
       setBusy(false);
     }
   };
 
+  const backUp = () => syncNow(db).then(() => haptic.success(), report);
+
+  const disconnect = () =>
+    Alert.alert('Stop backing up?', 'Your data stays on this phone, and the last backup stays in your Google Drive.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Stop', style: 'destructive', onPress: () => disconnectDrive(db) },
+    ]);
+
+  const on = sync.state !== 'off';
+  const working = sync.state === 'syncing' || busy;
+
   return (
     <Screen>
-      <FormSection card title="Sync">
-        <Text variant="label" tone={sync.state === 'error' ? 'danger' : 'default'}>
-          {STATE_LABEL[sync.state]}
+      {/* Where the data is, in one line, before anything else. */}
+      <View className="flex-row items-center gap-3 rounded-2xl bg-fill px-3.5 py-3">
+        <Icon name="ms:smartphone" size={22} color={muted} />
+        <Text variant="small" className="min-w-0 flex-1">
+          Your data is stored on this phone. There’s no Pettagam account and no server.
         </Text>
+      </View>
+
+      {on ? (
+        <FormSection card title="Google Drive backup">
+          <View className="flex-row items-center gap-2.5">
+            <Icon
+              name={sync.state === 'error' || sync.state === 'offline' ? 'ms:cloud_off' : 'ms:cloud_done'}
+              size={20}
+              color={sync.state === 'error' || sync.state === 'offline' ? warning : success}
+            />
+            <View className="min-w-0 flex-1">
+              <Text tone="default" weight="medium">
+                {sync.state === 'syncing' ? 'Backing up…' : sync.state === 'offline' ? 'Offline' : sync.state === 'error' ? 'Backup problem' : `Backed up ${ago(sync.lastSyncAt)}`}
+              </Text>
+              <Text variant="caption" numberOfLines={1}>
+                {sync.account}
+              </Text>
+            </View>
+          </View>
+          {sync.error ? (
+            <Text variant="small" tone="danger">
+              {sync.error}
+            </Text>
+          ) : null}
+          {__DEV__ && sync.detail ? (
+            <Text variant="caption" selectable>
+              {sync.detail}
+            </Text>
+          ) : null}
+          {sync.pending > 0 ? <Text variant="small">{`${sync.pending} change(s) not backed up yet`}</Text> : null}
+          <Button title={working ? 'Backing up…' : 'Back up now'} disabled={working} onPress={backUp} />
+          <Text variant="caption">
+            Backs up a short while after each change, and when you open or leave the app. On another phone, connect the same Google account to bring
+            everything over; both phones then stay in step.
+          </Text>
+        </FormSection>
+      ) : (
+        <FormSection card title="Back up to Google Drive">
+          <Text variant="small">
+            Keep a copy in your own Google Drive, to restore on a new phone or use Pettagam on two. Already backed up from another phone? Connect the same
+            account and it’s restored here.
+          </Text>
+          <Button title={busy ? 'Connecting…' : 'Connect Google Drive'} disabled={busy} onPress={connect} />
+        </FormSection>
+      )}
+
+      <FormSection card title="What Pettagam can see in your Drive">
         <Text variant="small">
-          {sync.pending > 0 ? `${sync.pending} change(s) waiting to upload · ` : ''}
-          Last synced: {sync.lastSyncAt ? new Date(sync.lastSyncAt).toLocaleString('en-IN') : 'never'}
-        </Text>
-        {sync.error ? (
-          <Text variant="small" tone="danger">
-            {sync.error}
-          </Text>
-        ) : null}
-        {/* The raw server error, for development builds only. */}
-        {__DEV__ && sync.detail ? (
-          <Text variant="caption" selectable>
-            {sync.detail}
-          </Text>
-        ) : null}
-        <Button title={sync.state === 'syncing' ? 'Syncing…' : 'Sync now'} disabled={sync.state === 'syncing'} onPress={syncButton} />
-        <Text variant="caption">
-          Your data is stored in your Pettagam account and cached on this phone, so the app works offline. Edits upload a few seconds after
-          you make them.
+          Only its own hidden backup folder. It can’t see, open or change any of your other files, and the backup isn’t visible in your Drive’s file
+          list. You can remove it from Google Account → Data & privacy → Third-party apps.
         </Text>
       </FormSection>
 
-      <FormSection card title="Moving from Google Drive">
-        <Text variant="small">Used the earlier version with Drive sync? Import that backup once into your account.</Text>
-        <Button variant="secondary" title={busy ? 'Importing…' : 'Import from Google Drive'} disabled={busy} onPress={driveImport} />
-      </FormSection>
+      {on ? <Button variant="secondary" title="Stop backing up" onPress={disconnect} /> : null}
     </Screen>
   );
 }

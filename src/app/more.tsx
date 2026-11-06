@@ -3,18 +3,17 @@ import Constants from 'expo-constants';
 import { router } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useState, type ReactNode } from 'react';
-import { Alert, View } from 'react-native';
+import { View } from 'react-native';
 
 import { aiReady, useAi } from '@/ai/client';
-import { useAuth } from '@/auth/session';
-import { Button, Card, Divider, GroupLabel, Row, Screen, Text } from '@/components/ui';
-import { getSyncStatus, onSyncStatus, refreshPending, type SyncStatus } from '@/sync/neon-sync';
+import { Card, Divider, GroupLabel, Row, Screen, Text } from '@/components/ui';
+import { getSyncStatus, onSyncStatus, refreshPending, type SyncStatus } from '@/sync/drive-sync';
 import { paletteById } from '@/theme/palettes';
 import { LOCK_AFTER, useAppLock } from '@/security/app-lock';
 import { useThemePreference } from '@/theme/themePreference';
 
 const MODE_LABEL = { system: 'System', light: 'Light', dark: 'Dark' } as const;
-const SYNC_LABEL: Record<SyncStatus['state'], string> = { idle: 'Up to date', syncing: 'Syncing…', offline: 'Offline', error: 'Sync problem' };
+const SYNC_LABEL: Record<SyncStatus['state'], string> = { off: 'Off · only on this phone', idle: 'Google Drive', syncing: 'Backing up…', offline: 'Offline', error: 'Backup problem' };
 
 /** A captioned group of rows, iOS-settings style: small label above one card. */
 function Group({ title, children }: { title: string; children: ReactNode }) {
@@ -28,7 +27,6 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
 
 export default function More() {
   const db = useSQLiteContext();
-  const auth = useAuth();
   const theme = useThemePreference();
   const lock = useAppLock();
   const aiOn = useAi(aiReady);
@@ -39,39 +37,10 @@ export default function More() {
     return onSyncStatus(setSync);
   }, [db]);
 
-  const signOut = () => {
-    const warn =
-      sync.pending > 0
-        ? `${sync.pending} change(s) haven’t uploaded yet and will be lost. Connect to the internet and sync first.`
-        : 'Your data stays safe in your account. This phone’s copy is removed.';
-    Alert.alert('Sign out?', warn, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: () => auth.signOut() },
-    ]);
-  };
-
-  const name = auth.user?.name?.trim() || auth.user?.email?.split('@')[0] || 'You';
 
   return (
     // A full page (back button, no tab bar), opened from the More button in the tab bar.
     <Screen>
-
-      {/* Who's signed in */}
-      <Card className="flex-row items-center gap-3">
-        <View className="h-12 w-12 items-center justify-center rounded-full bg-primary">
-          <Text variant="heading" tone="onPrimary" className="text-3xl">
-            {name[0]?.toUpperCase()}
-          </Text>
-        </View>
-        <View className="min-w-0 flex-1">
-          <Text variant="heading" numberOfLines={1}>
-            {name}
-          </Text>
-          <Text variant="small" numberOfLines={1}>
-            {auth.user?.email}
-          </Text>
-        </View>
-      </Card>
 
       <Group title="Money">
         <Row icon="card" title="Accounts" subtitle="Banks, cards, loans and chits" onPress={() => router.push('/accounts')} />
@@ -121,8 +90,8 @@ export default function More() {
         <Divider />
         <Row
           icon="sync"
-          title="Sync & backup"
-          subtitle={sync.pending > 0 ? `${sync.pending} change(s) waiting` : SYNC_LABEL[sync.state]}
+          title="Backup"
+          subtitle={sync.state !== 'off' && sync.pending > 0 ? `${sync.pending} change(s) to back up` : SYNC_LABEL[sync.state]}
           onPress={() => router.push('/settings/sync')}
         />
       </Group>
@@ -133,9 +102,7 @@ export default function More() {
         </Group>
       ) : null}
 
-      {/* Sign out sits apart at the end, so it's never tapped on the way to something else. */}
       <View className="gap-2 pt-2">
-        <Button variant="danger" title="Sign out" onPress={signOut} />
         <Text variant="caption" align="center">
           Pettagam {Constants.expoConfig?.version ?? ''}
         </Text>

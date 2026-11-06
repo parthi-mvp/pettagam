@@ -6,7 +6,7 @@ type AppVariant = 'development' | 'preview' | 'production';
 const APP_VARIANT = (process.env.APP_VARIANT as AppVariant) || 'development';
 
 // Each variant is its own app on the phone (own name, id and link scheme), so a dev build can sit
-// next to the production one without sharing its data or sign-in.
+// next to the production one without sharing its data. Each id needs its own Android OAuth client for Drive backup.
 const variantConfig = {
   development: { name: 'Pettagam Dev', id: 'com.pettagam.app.dev', scheme: 'pettagam-dev', icon: '-dev' },
   preview: { name: 'Pettagam Preview', id: 'com.pettagam.app.preview', scheme: 'pettagam-preview', icon: '-preview' },

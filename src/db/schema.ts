@@ -66,7 +66,7 @@ const MIGRATIONS: string[] = [
   -- Local-only key/value settings (not synced): last sync time, SMS scan cursor, etc.
   CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT);
   `,
-  // v2 — Neon: rows edited on this phone that still need uploading (the "outbox").
+  // v2 — rows edited on this phone since the last backup (the "outbox"; src/sync/drive-sync.ts).
   // One entry per row; re-editing a queued row just bumps its seq.
   `
   CREATE TABLE outbox (
@@ -76,22 +76,22 @@ const MIGRATIONS: string[] = [
     UNIQUE (table_name, row_id)
   );
   `,
-  // v3 — categories can carry a chosen icon (null = guess from the name). Needs neon/migrations/0003 on the server.
+  // v3 — categories can carry a chosen icon (null = guess from the name).
   `ALTER TABLE categories ADD COLUMN icon TEXT;`,
   // v4 — a bank account's debit card digits: ATM and card alerts quote the card, not the account.
   `ALTER TABLE accounts ADD COLUMN card_last4 TEXT;`,
-  // v5 — monthly budgets: category_id null = the overall budget. Needs neon/migrations/0005 on the server.
+  // v5 — monthly budgets: category_id null = the overall budget.
   `CREATE TABLE budgets (${SYNC_COLS},
     category_id TEXT,
     amount REAL NOT NULL
   );`,
   // v6 — account balances match transfers by to_account_id too; without this they scan every transaction.
   `CREATE INDEX idx_txn_to_account ON transactions(to_account_id);`,
-  // v7 — tags: a JSON array of labels that cut across categories (src/lib/tags.ts). Needs neon/migrations/0007.
+  // v7 — tags: a JSON array of labels that cut across categories (src/lib/tags.ts).
   `ALTER TABLE transactions ADD COLUMN tags TEXT;`,
-  // v8 — how the money moved, read from the SMS (upi, card, neft…; src/sms/parser.ts). Needs neon/migrations/0008.
+  // v8 — how the money moved, read from the SMS (upi, card, neft…; src/sms/parser.ts).
   `ALTER TABLE transactions ADD COLUMN via TEXT;`,
-  // v9 — a card's network (visa, mastercard, rupay…; src/catalog/networks.ts). Also in neon/migrations/0008.
+  // v9 — a card's network (visa, mastercard, rupay…; src/catalog/networks.ts).
   `ALTER TABLE accounts ADD COLUMN network TEXT;`,
 ];
 

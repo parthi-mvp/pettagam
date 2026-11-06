@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import { useFonts } from 'expo-font';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -10,7 +9,6 @@ import { useUniwind } from 'uniwind';
 
 import '../global.css';
 
-import { AuthProvider, useAuth } from '@/auth/session';
 import { AppToaster } from '@/components/ui';
 import { StackHeader } from '@/components/ui/StackHeader';
 import { startupFonts } from '@/constants/fonts';
@@ -63,10 +61,8 @@ export default function RootLayout() {
         <KeyboardProvider>
         <ThemeProvider value={navTheme}>
           <SQLiteProvider databaseName="pettagam.db" onInit={initDatabase}>
-            <AuthProvider>
-              <AutoSync />
-              <Routes />
-            </AuthProvider>
+            <AutoSync />
+            <Routes />
           </SQLiteProvider>
         </ThemeProvider>
         <AppToaster />
@@ -77,14 +73,8 @@ export default function RootLayout() {
 }
 
 function Routes() {
-  const { status } = useAuth();
-  const welcomeSeen = useWelcomeSeen((s) => s.seen);
-  const signedIn = status === 'signedIn';
-  // Each sign-in resets the flag, so the next sign-out opens on the welcome screens again.
-  useEffect(() => {
-    if (signedIn) useWelcomeSeen.setState({ seen: false });
-  }, [signedIn]);
-  if (status === 'loading') return null;
+  // No account: the welcome screens once per install, then the app. Data lives on the phone.
+  const ready = useWelcomeSeen((s) => s.seen);
   return (
     <>
     {/* While offline, a bar at the top pushes every screen down (see OfflineFrame). */}
@@ -92,7 +82,7 @@ function Routes() {
     <Stack
       // A JS header (centred title, the app's round back button): the native one crashes on a theme switch (see StackHeader).
       screenOptions={{ header: (props) => <StackHeader {...props} /> }}>
-      <Stack.Protected guard={signedIn}>
+      <Stack.Protected guard={ready}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false, title: 'Home' }} />
         <Stack.Screen name="transaction-form" options={{ presentation: 'modal', title: 'Transaction' }} />
         <Stack.Screen name="account-form" options={{ presentation: 'modal', title: 'Account' }} />
@@ -113,24 +103,20 @@ function Routes() {
         <Stack.Screen name="category-form" options={{ presentation: 'modal', title: 'Category' }} />
         <Stack.Screen name="settings/appearance" options={{ title: 'Appearance' }} />
         <Stack.Screen name="settings/ai" options={{ title: 'AI assistant' }} />
-        <Stack.Screen name="settings/sync" options={{ title: 'Sync & backup' }} />
+        <Stack.Screen name="settings/sync" options={{ title: 'Backup' }} />
         <Stack.Screen name="settings/sms" options={{ title: 'Bank SMS alerts' }} />
         <Stack.Screen name="settings/developer" options={{ title: 'Developer tools' }} />
         <Stack.Screen name="settings/sms-card-test" options={{ title: 'New-SMS card' }} />
         <Stack.Screen name="settings/sms-lab" options={{ title: 'SMS tester' }} />
         <Stack.Screen name="settings/security" options={{ title: 'App lock' }} />
       </Stack.Protected>
-      {/* Signed out: the welcome screens come first, every time; sign-in is reached from them. */}
-      <Stack.Protected guard={!signedIn && !welcomeSeen}>
+      <Stack.Protected guard={!ready}>
         <Stack.Screen name="welcome" options={{ headerShown: false, animation: 'fade' }} />
-      </Stack.Protected>
-      <Stack.Protected guard={!signedIn}>
-        <Stack.Screen name="sign-in" options={{ headerShown: false }} />
       </Stack.Protected>
     </Stack>
     </OfflineFrame>
     {/* Above every screen: the fingerprint / face lock (More → Settings → App lock), covering everything. */}
-    <AppLockGate signedIn={signedIn} />
+    <AppLockGate signedIn={ready} />
     </>
   );
 }

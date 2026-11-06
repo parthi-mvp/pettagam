@@ -7,7 +7,7 @@ import { AppState, Pressable, RefreshControl, View } from 'react-native';
 import Animated, { Easing, FadeInDown, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import { toast } from 'sonner-native';
 
-import { useAuth } from '@/auth/session';
+import { useWelcomeSeen } from '@/onboarding/welcome-seen';
 import { categoryIcon, ChestMark, Icon } from '@/components/icons';
 import { Amount, Button, Card, Divider, Empty, PressableScale, Row, Screen, SectionTitle, Text } from '@/components/ui';
 import { Motion } from '@/constants/theme';
@@ -21,8 +21,8 @@ import { BUDGET_TEXT } from '@/components/budget-bar';
 import { MonthSpendBars, PaceChart, RankedShares } from '@/components/charts';
 import { categoryBreakdown, insights, monthlyTrend, netWorth, spendPace } from '@/reports/analytics';
 import { pendingSms } from '@/sms/pending';
-import { syncNow } from '@/sync/neon-sync';
-import { describeSyncError } from '@/sync/wire';
+import { syncNow } from '@/sync/drive-sync';
+import { describeSyncError } from '@/sync/errors';
 import { useSyncStatus } from '@/sync/use-sync-status';
 import { useThemeColors } from '@/theme/useThemeColor';
 
@@ -83,10 +83,15 @@ function nextDay(day: number) {
 
 export default function Home() {
   const db = useSQLiteContext();
-  const { user } = useAuth();
   const sync = useSyncStatus();
+  // "Restore from Google Drive" on the welcome screens: open Backup once the app is up.
+  useEffect(() => {
+    if (!useWelcomeSeen.getState().restore) return;
+    useWelcomeSeen.setState({ restore: false });
+    router.push('/settings/sync');
+  }, []);
   const [refreshing, setRefreshing] = useState(false);
-  const [primary, success, successFg, danger, warning, warningFg, fg, heroNegative, brassInk, brass] = useThemeColors([
+  const [primary, success, successFg, danger, warning, warningFg, fg, heroNegative, brassInk, brass, fgMuted] = useThemeColors([
     'primary',
     'success',
     'success-fg',
@@ -97,6 +102,7 @@ export default function Home() {
     'hero-negative',
     'brass-fg',
     'brass',
+    'fg-muted',
   ] as const);
 
   const { start, end } = monthRange(0);
@@ -117,7 +123,6 @@ export default function Home() {
   const { data: pace } = useLiveQuery((d) => spendPace(d), ['transactions']);
   const { data: trend } = useLiveQuery((d) => monthlyTrend(d, 6), ['transactions']);
 
-  const firstName = (user?.name || user?.email?.split('@')[0] || '').split(' ')[0];
   const spent = month?.expense ?? 0;
   const earned = month?.income ?? 0;
   const saved = earned - spent;
@@ -149,32 +154,37 @@ export default function Home() {
     } catch (e) {
       // Offline isn't a failure: a calm note. Anything else: one plain sentence, never the raw server text.
       const { offline, message } = describeSyncError(e instanceof Error ? e.message : String(e));
-      if (offline) toast.info('You’re offline', { description: 'Your changes are saved on this phone and will upload when you’re back online.' });
+      if (offline) toast.info('You’re offline', { description: 'Your changes are saved on this phone and will back up when you’re back online.' });
       else {
         haptic.error();
-        toast.error('Couldn’t sync', { description: message ?? undefined });
+        toast.error('Couldn’t back up', { description: message ?? undefined });
       }
     } finally {
       setRefreshing(false);
     }
   };
 
+  // Backup state. "off" (only on this phone) is a choice, so it stays neutral, not a warning.
   const syncLabel =
-    sync.state === 'syncing'
-      ? 'Syncing…'
-      : sync.state === 'offline'
-        ? `Offline${sync.pending ? ` · ${sync.pending} to upload` : ''}`
-        : sync.state === 'error'
-          ? 'Sync problem · tap to retry'
-          : `Synced ${ago(sync.lastSyncAt)}`;
+    sync.state === 'off'
+      ? 'Not backed up · set up Google Drive backup'
+      : sync.state === 'syncing'
+        ? 'Backing up…'
+        : sync.state === 'offline'
+          ? `Offline${sync.pending ? ` · ${sync.pending} to back up` : ''}`
+          : sync.state === 'error'
+            ? 'Backup problem · tap to retry'
+            : `Backed up ${ago(sync.lastSyncAt)}`;
   const syncTone =
-    sync.state === 'error'
-      ? { bg: 'bg-danger-soft', ink: danger }
-      : sync.state === 'offline'
-        ? { bg: 'bg-warning-soft', ink: warningFg }
-        : sync.state === 'syncing'
-          ? { bg: 'bg-primary-soft', ink: primary }
-          : { bg: 'bg-success-soft', ink: successFg };
+    sync.state === 'off'
+      ? { bg: 'bg-fill', ink: fgMuted }
+      : sync.state === 'error'
+        ? { bg: 'bg-danger-soft', ink: danger }
+        : sync.state === 'offline'
+          ? { bg: 'bg-warning-soft', ink: warningFg }
+          : sync.state === 'syncing'
+            ? { bg: 'bg-primary-soft', ink: primary }
+            : { bg: 'bg-success-soft', ink: successFg };
 
   return (
     <View className="flex-1 bg-canvas">
@@ -203,7 +213,7 @@ export default function Home() {
                   label={syncLabel}
                   spinning={sync.state === 'syncing'}
                   tone={syncTone}
-                  onPress={() => (sync.state === 'error' ? syncNow(db).catch(() => {}) : router.push('/more'))}
+                  onPress={() => (sync.state === 'error' ? syncNow(db).catch(() => {}) : router.push('/settings/sync'))}
                 />
                 <PressableScale
                   onPress={() => router.push('/ask')}
@@ -223,10 +233,7 @@ export default function Home() {
             <Card variant="hero" className="gap-3 rounded-[22px] p-4">
               <View className="flex-row items-baseline gap-1.5">
                 <Text variant="small" className="font-tamil text-brass">
-                  வணக்கம்,
-                </Text>
-                <Text variant="label" tone="onHero" className="shrink" numberOfLines={1}>
-                  {firstName || 'there'}
+                  வணக்கம்
                 </Text>
               </View>
               <View className="gap-1">

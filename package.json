@@ -65,7 +65,6 @@
     "lint": "expo lint",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "test:db": "neon/test/run.sh",
     "prebuild": "expo prebuild",
     "eas:preview": "eas build --local --profile preview --platform android",
     "eas:prod": "eas build --local --profile production --platform android"

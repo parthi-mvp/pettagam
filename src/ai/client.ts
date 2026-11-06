@@ -2,7 +2,7 @@ import * as SecureStore from 'expo-secure-store';
 import Storage from 'expo-sqlite/kv-store';
 import { create } from 'zustand';
 
-// The API key lives only in the device keychain; it is never synced to Neon.
+// The API key lives only in the device keychain; it is never backed up.
 const KEY = 'ai.apiKey';
 const CONF = 'ai.config';
 
