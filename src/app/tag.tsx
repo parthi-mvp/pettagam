@@ -1,11 +1,11 @@
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useState } from 'react';
-import { Alert, View } from 'react-native';
+import { View } from 'react-native';
 import { toast } from 'sonner-native';
 
 import { TxnList } from '@/components/txn-list';
-import { Button, Card, Empty, Field, FormSection, Screen, SectionTitle, ShareBar, Stat, Text } from '@/components/ui';
+import { Button, Card, dialog, Empty, Field, FormSection, Screen, SectionTitle, ShareBar, Stat, Text } from '@/components/ui';
 import { useLiveQuery } from '@/db/events';
 import { listTransactions, renameTag, tagCategoryBreakdown } from '@/db/repo';
 import { useTheme } from '@/hooks/use-theme';
@@ -38,7 +38,7 @@ export default function TagDetail() {
   };
 
   const remove = () =>
-    Alert.alert(`Remove “${name}”?`, 'The tag comes off every entry. The entries themselves stay.', [
+    dialog(`Remove “${name}”?`, 'The tag comes off every entry. The entries themselves stay.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove',

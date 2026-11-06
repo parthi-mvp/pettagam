@@ -1,12 +1,12 @@
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 
 import { LoanPanel } from '@/components/loan-panel';
 import { ACCOUNT_ICON, ACCOUNT_TYPE_OPTIONS, BankPicker, OptionPicker } from '@/components/pickers';
 import { NetworkMark } from '@/components/network-mark';
-import { Button, Field, FormSection, PressableScale, Screen, Text } from '@/components/ui';
+import { Button, dialog, Field, FormSection, PressableScale, Screen, Text } from '@/components/ui';
 import { useLiveQuery } from '@/db/events';
 import { accountBalances, getById, save, softDelete } from '@/db/repo';
 import { isCardLike, isLiability, isPersonal, type AccountType } from '@/db/types';
@@ -79,21 +79,21 @@ export default function AccountForm() {
   const num = (s: string) => (s.trim() ? Number(s.replace(/,/g, '')) : null);
 
   const onSave = async () => {
-    if (!name.trim()) return Alert.alert('Enter a name', 'e.g. "HDFC Savings" or "ICICI Amazon Pay card"');
-    if (last4 && !/^\d{3,4}$/.test(last4)) return Alert.alert('Last digits should be 3–4 numbers');
-    if (hasDebitCard && cardLast4 && !/^\d{4}$/.test(cardLast4)) return Alert.alert('Debit card digits should be 4 numbers');
+    if (!name.trim()) return dialog('Enter a name', 'e.g. "HDFC Savings" or "ICICI Amazon Pay card"');
+    if (last4 && !/^\d{3,4}$/.test(last4)) return dialog('Last digits should be 3–4 numbers');
+    if (hasDebitCard && cardLast4 && !/^\d{4}$/.test(cardLast4)) return dialog('Debit card digits should be 4 numbers');
     // The server rejects these (numeric(14,2), day 1–31); a rejected row would stall every upload.
     const money = [num(opening), isCardLike(type) ? num(limit) : null];
-    if (money.some((n) => n != null && !(Math.abs(n) < 1e12))) return Alert.alert('Enter amounts as plain numbers', 'e.g. 25000 or -1500.50');
+    if (money.some((n) => n != null && !(Math.abs(n) < 1e12))) return dialog('Enter amounts as plain numbers', 'e.g. 25000 or -1500.50');
     const day = isCardLike(type) ? num(billingDay) : null;
-    if (day != null && !(Number.isInteger(day) && day >= 1 && day <= 31)) return Alert.alert('Statement day should be 1–31');
+    if (day != null && !(Number.isInteger(day) && day >= 1 && day <= 31)) return dialog('Statement day should be 1–31');
     const loan = type === 'loan';
     const due = isCardLike(type) || loan ? num(dueDay) : null;
-    if (due != null && !(Number.isInteger(due) && due >= 1 && due <= 31)) return Alert.alert(loan ? 'EMI day should be 1–31' : 'Payment due day should be 1–31');
+    if (due != null && !(Number.isInteger(due) && due >= 1 && due <= 31)) return dialog(loan ? 'EMI day should be 1–31' : 'Payment due day should be 1–31');
     const r = loan ? num(rate) : null;
-    if (r != null && !(r >= 0 && r < 100)) return Alert.alert('Interest rate should be a % a year, e.g. 8.5');
+    if (r != null && !(r >= 0 && r < 100)) return dialog('Interest rate should be a % a year, e.g. 8.5');
     const e = loan ? num(emi) : null;
-    if (e != null && !(e > 0 && e < 1e12)) return Alert.alert('Enter the EMI as a plain number');
+    if (e != null && !(e > 0 && e < 1e12)) return dialog('Enter the EMI as a plain number');
     await save(db, 'accounts', {
       id,
       type,
@@ -115,7 +115,7 @@ export default function AccountForm() {
   };
 
   const onDelete = () =>
-    Alert.alert('Delete account?', 'Its transactions stay but will show without an account.', [
+    dialog('Delete account?', 'Its transactions stay but will show without an account.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',

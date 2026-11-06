@@ -1,12 +1,12 @@
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { toast } from 'sonner-native';
 
 import { averageSpend, listBudgets, monthSpend, roundBudget } from '@/budget/queries';
 import { CategoryPicker } from '@/components/pickers';
-import { AmountInput, Button, Card, FormSection, Screen, Text } from '@/components/ui';
+import { AmountInput, Button, Card, dialog, FormSection, Screen, Text } from '@/components/ui';
 import { useLiveQuery } from '@/db/events';
 import { getById, listCategories, save, softDelete } from '@/db/repo';
 import type { Budget } from '@/db/types';
@@ -62,9 +62,9 @@ export default function BudgetForm() {
   const amt = Number(amount.replace(/,/g, '')) || 0;
 
   const onSave = async () => {
-    if (!target) return Alert.alert('Choose what this budget is for');
-    if (amt <= 0) return Alert.alert('Enter a monthly amount');
-    if (taken.has(target)) return Alert.alert('Already set', `${targetName} already has a budget. Edit that one instead.`);
+    if (!target) return dialog('Choose what this budget is for');
+    if (amt <= 0) return dialog('Enter a monthly amount');
+    if (taken.has(target)) return dialog('Already set', `${targetName} already has a budget. Edit that one instead.`);
     await save(db, 'budgets', { id: existing?.id, category_id: catId, amount: amt });
     haptic.success();
     toast.success(`${targetName}: ${money(amt)} a month`);
@@ -72,7 +72,7 @@ export default function BudgetForm() {
   };
 
   const onRemove = () =>
-    Alert.alert('Remove this budget?', 'Your spending stays; only the limit goes.', [
+    dialog('Remove this budget?', 'Your spending stays; only the limit goes.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove',

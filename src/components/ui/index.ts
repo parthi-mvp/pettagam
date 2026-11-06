@@ -1,5 +1,6 @@
 // Pettagam UI kit — Uniwind (Tailwind v4) + tailwind-variants. Tokens: src/global.css.
 export { AppToaster } from './AppToaster';
+export { dialog, DialogHost, type DialogButton } from './Dialog';
 export { Button, IconButton, type ButtonProps, type ButtonVariants } from './Button';
 export { Row, ShareBar, Stat } from './Data';
 export { Chips, DateField, SegmentedControl } from './Form';

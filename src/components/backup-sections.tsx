@@ -1,6 +1,6 @@
 import { useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useState } from 'react';
-import { Alert, View } from 'react-native';
+import { View } from 'react-native';
 import { toast } from 'sonner-native';
 
 import { getSetting } from '@/db/repo';
@@ -11,7 +11,7 @@ import { NotABackupError, pickBackupFile, restoreBackup, saveBackupFile, unlockB
 import { snapshotCounts, type Snapshot } from '@/sync/snapshot';
 import { WrongPasswordError, type Sealed } from '@/sync/vault';
 
-import { Button, Field, FormSection, SwitchRow, Text } from './ui';
+import { Button, dialog, Field, FormSection, SwitchRow, Text } from './ui';
 
 const MIN_PASSWORD = 8;
 const FORGET_WARNING = 'There’s no way to recover it: without this password, the backup can’t be opened by anyone, including you.';
@@ -177,7 +177,7 @@ export function DriveEncryptionSection({ sync }: { sync: SyncStatus }) {
           title="Forgot the password?"
           disabled={busy}
           onPress={() =>
-            Alert.alert(
+            dialog(
               'Start the Drive backup afresh?',
               'Every Pettagam file in your Drive is deleted, then this phone backs up again, unencrypted. Your data on this phone stays. Other phones back up again when they next sync.',
               [
@@ -202,7 +202,7 @@ export function DriveEncryptionSection({ sync }: { sync: SyncStatus }) {
           if (on) setSetting(true);
           else if (setting) setSetting(false);
           else
-            Alert.alert('Turn off encryption?', 'Your phones rewrite their Drive backup unencrypted.', [
+            dialog('Turn off encryption?', 'Your phones rewrite their Drive backup unencrypted.', [
               { text: 'Cancel', style: 'cancel' },
               { text: 'Turn off', style: 'destructive', onPress: () => work(() => disableDriveEncryption(db), 'Encryption turned off') },
             ]);

@@ -3,7 +3,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useSQLiteContext } from 'expo-sqlite';
 import { StatusBar } from 'expo-status-bar';
 import { startTransition, useEffect, useRef, useState } from 'react';
-import { Alert, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, View } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import Animated, { Easing, FadeIn, ReduceMotion, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { useUniwind } from 'uniwind';
@@ -15,7 +15,7 @@ import { aiDraftFromImage, aiDraftTransaction, aiSuggestCategoryAndTags } from '
 import type { AiDraft } from '@/ai/parse';
 import { Icon } from '@/components/icons';
 import { AccountPicker, CategoryGrid, CategoryTile, useUsage } from '@/components/pickers';
-import { AmountInput, BackButton, OptionRow, Button, Card, Chips, DateField, Field, GroupLabel, HeroBackdrop, IconTile, PressableScale, Sheet, StickyFooter, Text, type SheetRef } from '@/components/ui';
+import { AmountInput, BackButton, Button, Card, Chips, DateField, dialog, Field, GroupLabel, HeroBackdrop, IconTile, OptionRow, PressableScale, Sheet, StickyFooter, Text, type SheetRef } from '@/components/ui';
 import { useLiveQuery } from '@/db/events';
 import { getById, listAccounts, listCategories, save, softDelete, tagTotals } from '@/db/repo';
 import type { AccountType, CategoryKind, Transaction, TxnType } from '@/db/types';
@@ -147,10 +147,10 @@ export default function TransactionForm() {
 
   const onSave = async () => {
     const when = parseDate(date);
-    if (!amt || amt <= 0) return Alert.alert('Enter an amount');
-    if (!accountId) return Alert.alert('Add an account first', 'Go to More → Accounts → Add.');
-    if (type === 'transfer' && (!toAccountId || toAccountId === accountId)) return Alert.alert('Pick a different destination account');
-    if (!when) return Alert.alert('Date must be DD/MM/YYYY');
+    if (!amt || amt <= 0) return dialog('Enter an amount');
+    if (!accountId) return dialog('Add an account first', 'Go to More → Accounts → Add.');
+    if (type === 'transfer' && (!toAccountId || toAccountId === accountId)) return dialog('Pick a different destination account');
+    if (!when) return dialog('Date must be DD/MM/YYYY');
     // Keep the time of day for existing entries; new ones use now if the date is today.
     const sameDay = existing && toInputDate(existing.date) === date;
     const ts = sameDay ? existing.date : toInputDate(Date.now()) === date ? Date.now() : when + 12 * 3600_000;
@@ -180,7 +180,7 @@ export default function TransactionForm() {
 
   const onDelete = () => {
     haptic.warning();
-    Alert.alert('Delete transaction?', undefined, [
+    dialog('Delete transaction?', undefined, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
@@ -230,7 +230,7 @@ export default function TransactionForm() {
     let base64: string | null | undefined = null;
     try {
       if (camera && !(await ImagePicker.requestCameraPermissionsAsync()).granted) {
-        return Alert.alert('Camera access needed', 'Allow camera access in system settings to scan bills.');
+        return dialog('Camera access needed', 'Allow camera access in system settings to scan bills.');
       }
       // shortcut: quality 0.5 keeps the upload to roughly 0.5-2 MB; resize with expo-image-manipulator if providers reject big photos.
       const opts: ImagePicker.ImagePickerOptions = { mediaTypes: 'images', base64: true, quality: 0.5 };

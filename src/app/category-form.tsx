@@ -1,14 +1,14 @@
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useState } from 'react';
-import { Alert, Pressable } from 'react-native';
+import { Pressable } from 'react-native';
 
 import { CATEGORY_COLORS } from '@/catalog/categories';
 import { toast } from 'sonner-native';
 
 import { CategoryFields } from '@/components/category-fields';
 import { categoryIcon, type AnyIcon } from '@/components/icons';
-import { Button, Screen, Text } from '@/components/ui';
+import { Button, dialog, Screen, Text } from '@/components/ui';
 import { getById, listCategories, newCategoryId, save, softDelete } from '@/db/repo';
 import type { CategoryKind } from '@/db/types';
 import { haptic } from '@/lib/haptics';
@@ -39,9 +39,9 @@ export default function CategoryForm() {
 
   const onSave = async () => {
     const n = name.trim();
-    if (!n) return Alert.alert('Enter a name', 'e.g. "Pets", "Gifts" or "Side income"');
+    if (!n) return dialog('Enter a name', 'e.g. "Pets", "Gifts" or "Side income"');
     const clash = (await listCategories(db)).find((c) => c.kind === kind && c.id !== params.id && c.name.toLowerCase() === n.toLowerCase());
-    if (clash) return Alert.alert('Already exists', `There’s already a ${kind} category called “${clash.name}”.`);
+    if (clash) return dialog('Already exists', `There’s already a ${kind} category called “${clash.name}”.`);
     await save(db, 'categories', { id: params.id ?? (await newCategoryId(db, kind, n)), name: n, kind, color, icon });
     haptic.success();
     toast.success(params.id ? 'Category saved' : `${n} added`);
@@ -49,7 +49,7 @@ export default function CategoryForm() {
   };
 
   const onDelete = () =>
-    Alert.alert('Delete category?', 'Transactions already in it keep the label; it just won’t be offered for new ones.', [
+    dialog('Delete category?', 'Transactions already in it keep the label; it just won’t be offered for new ones.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',

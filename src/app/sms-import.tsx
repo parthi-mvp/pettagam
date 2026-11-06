@@ -2,7 +2,7 @@ import { isSmsReadingAvailable, readInbox, requestSmsPermission } from '@modules
 import { router, Stack } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { toast } from 'sonner-native';
 
@@ -10,23 +10,7 @@ import { aiReady, aiSmsReady, useAi } from '@/ai/client';
 import { categoryIcon, Icon } from '@/components/icons';
 import { AccountGrid, CategoryGrid } from '@/components/pickers';
 import { TagField } from '@/components/tag-field';
-import {
-  Button,
-  Card,
-  Checkbox,
-  DateField,
-  Divider,
-  Field,
-  GroupLabel,
-  IconTile,
-  PressableScale,
-  Row,
-  Screen,
-  SegmentedControl,
-  Sheet,
-  Text,
-  type SheetRef,
-} from '@/components/ui';
+import { Button, Card, Checkbox, DateField, dialog, Divider, Field, GroupLabel, IconTile, PressableScale, Row, Screen, SegmentedControl, Sheet, Text, type SheetRef } from '@/components/ui';
 import { useLiveQuery } from '@/db/events';
 import { getSetting, listAccounts, listCategories } from '@/db/repo';
 import { cn } from '@/lib/cn';
@@ -89,7 +73,7 @@ export default function SmsImport() {
     setBusy(true);
     try {
       if (!(await requestSmsPermission())) {
-        Alert.alert('Permission needed', 'Allow SMS access in system settings to import bank alerts.');
+        dialog('Permission needed', 'Allow SMS access in system settings to import bank alerts.');
         return;
       }
       const inbox = await readInbox(range.from, LIMIT, range.to);
@@ -98,7 +82,7 @@ export default function SmsImport() {
       setScanned({ range, inbox });
       haptic.light();
     } catch (e) {
-      Alert.alert('Could not read SMS', String(e));
+      dialog('Could not read SMS', String(e));
     } finally {
       setBusy(false);
     }

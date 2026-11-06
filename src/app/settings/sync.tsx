@@ -1,10 +1,10 @@
 import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, View } from 'react-native';
+import { View } from 'react-native';
 
 import { BackupFileSection, DriveEncryptionSection } from '@/components/backup-sections';
 import { Icon } from '@/components/icons';
-import { Button, Divider, FormSection, Screen, Text } from '@/components/ui';
+import { Button, dialog, Divider, FormSection, Screen, Text } from '@/components/ui';
 import { toast } from 'sonner-native';
 import { haptic } from '@/lib/haptics';
 import { connectDrive, disconnectDrive, getSyncStatus, listDevices, onSyncStatus, refreshPending, removeDevice, syncNow, type SyncStatus } from '@/sync/drive-sync';
@@ -60,7 +60,7 @@ export default function BackupSettings() {
   const backUp = () => syncNow(db).then(() => haptic.success(), report);
 
   const disconnect = () =>
-    Alert.alert('Stop backing up?', 'Your data stays on this phone, and the last backup stays in your Google Drive.', [
+    dialog('Stop backing up?', 'Your data stays on this phone, and the last backup stays in your Google Drive.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Stop', style: 'destructive', onPress: () => disconnectDrive(db) },
     ]);
@@ -164,7 +164,7 @@ function Devices({ lastSyncAt }: { lastSyncAt: number | null }) {
   useEffect(load, [load, lastSyncAt]);
 
   const remove = (d: DeviceInfo) =>
-    Alert.alert(
+    dialog(
       `Remove ${d.name ?? 'this device'}?`,
       'Its backup files are deleted from your Drive. Everything it added stays here. If that phone is still in use, it will back up again the next time it opens Pettagam.',
       [

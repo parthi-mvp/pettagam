@@ -1,7 +1,7 @@
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useState } from 'react';
-import { Alert, View } from 'react-native';
+import { View } from 'react-native';
 
 import { aiMonthSummary, aiTaxCheck, financialYear } from '@/ai/features';
 import { AiNote } from '@/components/ai-note';
@@ -11,22 +11,7 @@ import { CashFlowBars, CategoryTrendList, PaceChart, RankedShares, SpendCalendar
 import { TxnList } from '@/components/txn-list';
 import { listTransactions, tagTotals } from '@/db/repo';
 import { categoryIcon, Icon } from '@/components/icons';
-import {
-  Amount,
-  Button,
-  Card,
-  Divider,
-  Empty,
-  IconTile,
-  MonthSwitcher,
-  PressableScale,
-  Row,
-  Screen,
-  SectionTitle,
-  SegmentedControl,
-  ShareBar,
-  Text,
-} from '@/components/ui';
+import { Amount, Button, Card, dialog, Divider, Empty, IconTile, MonthSwitcher, PressableScale, Row, Screen, SectionTitle, SegmentedControl, ShareBar, Text } from '@/components/ui';
 import { emitChange, useLiveQuery } from '@/db/events';
 import { money, monthRange } from '@/lib/format';
 import {
@@ -129,7 +114,7 @@ export default function Reports() {
   // Hidden merchants live in local settings; nudge the queries that read them.
   const hide = (merchant: string) => setRecurringHidden(db, merchant, true).then(() => emitChange('transactions'));
   const reviewRecurring = (r: { merchant: string; amount: number; monthly: number; last: number }) =>
-    Alert.alert(
+    dialog(
       r.merchant,
       `About ${money(r.monthly * 12)} a year. Last charged ${new Date(r.last).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}. Not using it? Cancel it with ${r.merchant}; Pettagam only tracks it.`,
       [

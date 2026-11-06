@@ -7,10 +7,10 @@ import {
   setSmsPopupEnabled,
 } from '@modules/sms-reader';
 import { useEffect, useState } from 'react';
-import { Alert, AppState, Linking, View } from 'react-native';
+import { AppState, Linking, View } from 'react-native';
 
 import { Icon } from '@/components/icons';
-import { Button, Card, FormSection, Screen, SwitchRow, Text } from '@/components/ui';
+import { Button, Card, dialog, FormSection, Screen, SwitchRow, Text } from '@/components/ui';
 import { useThemeColors } from '@/theme/useThemeColor';
 
 export default function SmsAlertsSettings() {
@@ -26,7 +26,7 @@ export default function SmsAlertsSettings() {
 
   const toggle = async (next: boolean) => {
     if (next && !(await requestSmsPopupPermissions())) {
-      Alert.alert('SMS permission needed', 'Allow “SMS” for Pettagam in system settings to get new bank alerts.', [
+      dialog('SMS permission needed', 'Allow “SMS” for Pettagam in system settings to get new bank alerts.', [
         { text: 'Not now', style: 'cancel' },
         { text: 'Open settings', onPress: () => Linking.openSettings() },
       ]);

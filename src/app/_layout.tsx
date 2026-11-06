@@ -9,7 +9,7 @@ import { useUniwind } from 'uniwind';
 
 import '../global.css';
 
-import { AppToaster } from '@/components/ui';
+import { AppToaster, DialogHost } from '@/components/ui';
 import { StackHeader } from '@/components/ui/StackHeader';
 import { startupFonts } from '@/constants/fonts';
 import { migrate } from '@/db/schema';
@@ -65,6 +65,7 @@ export default function RootLayout() {
           </SQLiteProvider>
         </ThemeProvider>
         <AppToaster />
+        <DialogHost />
       </KeyboardProvider>
       </GestureHandlerRootView>
     </SafeAreaListener>

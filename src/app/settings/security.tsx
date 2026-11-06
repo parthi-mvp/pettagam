@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Alert } from 'react-native';
 
-import { Chips, FormSection, Screen, SwitchRow, Text } from '@/components/ui';
+
+import { Chips, dialog, FormSection, Screen, SwitchRow, Text } from '@/components/ui';
 import { authenticate, biometricSupport, LOCK_AFTER, useAppLock, type LockAfter } from '@/security/app-lock';
 
 export default function SecuritySettings() {
@@ -27,7 +27,7 @@ export default function SecuritySettings() {
     }
     const s = await biometricSupport();
     if (!s.available) {
-      return Alert.alert(
+      return dialog(
         s.hardware ? 'Set up a fingerprint or face first' : 'No fingerprint or face sensor',
         s.hardware
           ? 'Add a fingerprint or face (and a screen lock) in your phone settings, then turn this on.'

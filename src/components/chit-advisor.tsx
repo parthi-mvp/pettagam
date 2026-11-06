@@ -1,6 +1,6 @@
 import { useSQLiteContext } from 'expo-sqlite';
 import { useState } from 'react';
-import { Alert, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { toast } from 'sonner-native';
 
 import { aiChitAdvice } from '@/ai/features';
@@ -23,7 +23,7 @@ import { haptic } from '@/lib/haptics';
 import { parseDetails } from '@/lib/invest';
 
 import { AiNote } from './ai-note';
-import { Button, Card, DateField, Divider, Field, Stat, SwitchRow, Text } from './ui';
+import { Button, Card, DateField, dialog, Divider, Field, Stat, SwitchRow, Text } from './ui';
 
 const num = (s: string) => (s.trim() ? Number(s.replace(/,/g, '')) : NaN);
 const pctText = (n: number | null) => (n == null ? '–' : `${n.toFixed(1)}% a year`);
@@ -69,13 +69,13 @@ export function ChitPanel({ inv, entries }: { inv: Investment; entries: Investme
         : null;
 
   const saveMonth = async () => {
-    if (m < 1 || m > plan.months) return Alert.alert(`Month must be between 1 and ${plan.months}`);
+    if (m < 1 || m > plan.months) return dialog(`Month must be between 1 and ${plan.months}`);
     const when = parseDate(date);
-    if (!isPaid && !when) return Alert.alert('Date must be DD/MM/YYYY');
+    if (!isPaid && !when) return dialog('Date must be DD/MM/YYYY');
     const amount = isFinite(num(paidAmt)) ? num(paidAmt) : Math.round(calc.net);
     const prize = isFinite(num(prizeAmt)) ? num(prizeAmt) : calc.prize;
-    if (!isPaid && !(amount > 0)) return Alert.alert('Enter the amount you paid');
-    if (won && !(prize > 0)) return Alert.alert('Enter the prize you received');
+    if (!isPaid && !(amount > 0)) return dialog('Enter the amount you paid');
+    if (won && !(prize > 0)) return dialog('Enter the prize you received');
     setBusy(true);
     try {
       const auctions: ChitAuction[] = (details.auctions ?? []).filter((a) => a.m !== m);

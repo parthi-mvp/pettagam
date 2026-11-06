@@ -1,10 +1,10 @@
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 
 import { AccountPicker } from '@/components/pickers';
-import { Button, DateField, Field, FormSection, Screen, SwitchRow, Text } from '@/components/ui';
+import { Button, DateField, dialog, Field, FormSection, Screen, SwitchRow, Text } from '@/components/ui';
 import { useLiveQuery } from '@/db/events';
 import { getById, listAccounts, save, softDelete } from '@/db/repo';
 import { isLiability } from '@/db/types';
@@ -40,14 +40,14 @@ export default function GoalForm() {
   const num = (s: string) => (s.trim() ? Number(s.replace(/,/g, '')) : null);
 
   const onSave = async () => {
-    if (!name.trim()) return Alert.alert('Name the goal', 'e.g. "Goa trip" or "Emergency fund"');
+    if (!name.trim()) return dialog('Name the goal', 'e.g. "Goa trip" or "Emergency fund"');
     const t = num(target);
-    if (!(t != null && t > 0 && t < 1e12)) return Alert.alert('Enter the amount you want to save');
+    if (!(t != null && t > 0 && t < 1e12)) return dialog('Enter the amount you want to save');
     const when = date ? parseDate(date) : null;
-    if (date && !when) return Alert.alert('Pick a valid date');
-    if (linked && !accountId) return Alert.alert('Pick the account you save in');
+    if (date && !when) return dialog('Pick a valid date');
+    if (linked && !accountId) return dialog('Pick the account you save in');
     const s = (num(saved) ?? 0) + (num(add) ?? 0);
-    if (!(Math.abs(s) < 1e12)) return Alert.alert('Enter amounts as plain numbers');
+    if (!(Math.abs(s) < 1e12)) return dialog('Enter amounts as plain numbers');
     await save(db, 'goals', {
       id,
       name: name.trim(),
@@ -61,7 +61,7 @@ export default function GoalForm() {
   };
 
   const onDelete = () =>
-    Alert.alert('Delete goal?', 'Your accounts and entries stay as they are.', [
+    dialog('Delete goal?', 'Your accounts and entries stay as they are.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',

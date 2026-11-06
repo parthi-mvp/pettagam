@@ -1,7 +1,7 @@
 import { router, type Href } from 'expo-router';
-import { Alert, Linking, View } from 'react-native';
+import { Linking, View } from 'react-native';
 
-import { Card, Chips, Divider, Empty, FormSection, Row, Screen, SwitchRow, Text } from '@/components/ui';
+import { Card, Chips, dialog, Divider, Empty, FormSection, Row, Screen, SwitchRow, Text } from '@/components/ui';
 import { useLiveQuery } from '@/db/events';
 import { dateLabel, money } from '@/lib/format';
 import { allowNotifications, useReminderPrefs } from '@/reminders/reminders';
@@ -27,7 +27,7 @@ export default function ReminderSettings() {
 
   const toggle = async (on: boolean) => {
     if (on && !(await allowNotifications())) {
-      return Alert.alert('Notifications are off for Pettagam', 'Allow notifications in your phone settings to get bill reminders.', [
+      return dialog('Notifications are off for Pettagam', 'Allow notifications in your phone settings to get bill reminders.', [
         { text: 'Not now', style: 'cancel' },
         { text: 'Open settings', onPress: () => Linking.openSettings() },
       ]);

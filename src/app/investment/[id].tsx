@@ -1,12 +1,12 @@
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useState } from 'react';
-import { Alert, View } from 'react-native';
+import { View } from 'react-native';
 
 import { aiExplainInvestment } from '@/ai/features';
 import { AiNote } from '@/components/ai-note';
 import { ChitPanel } from '@/components/chit-advisor';
-import { Button, Card, Chips, DateField, Divider, Field, Row, Screen, Stat, Text } from '@/components/ui';
+import { Button, Card, Chips, DateField, dialog, Divider, Field, Row, Screen, Stat, Text } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { useLiveQuery } from '@/db/events';
 import { getById, listInvestmentEntries, recomputeInvested, save, softDelete } from '@/db/repo';
@@ -53,8 +53,8 @@ export default function InvestmentDetail() {
   const addEntry = async () => {
     const amt = Number(amount.replace(/,/g, ''));
     const when = parseDate(date);
-    if (!amt || amt <= 0) return Alert.alert('Enter an amount');
-    if (!when) return Alert.alert('Date must be DD/MM/YYYY');
+    if (!amt || amt <= 0) return dialog('Enter an amount');
+    if (!when) return dialog('Date must be DD/MM/YYYY');
     await save(db, 'investment_entries', {
       investment_id: inv.id,
       kind: activeKind,
@@ -78,7 +78,7 @@ export default function InvestmentDetail() {
   };
 
   const removeEntry = (entryId: string) =>
-    Alert.alert('Delete entry?', undefined, [
+    dialog('Delete entry?', undefined, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
@@ -91,7 +91,7 @@ export default function InvestmentDetail() {
     ]);
 
   const removeInvestment = () =>
-    Alert.alert('Delete investment?', 'This removes it and all its entries.', [
+    dialog('Delete investment?', 'This removes it and all its entries.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
