@@ -57,6 +57,8 @@ export type Transaction = SyncedRow & {
   note: string | null;
   source: 'manual' | 'sms' | 'investment';
   sms_hash: string | null; // dedupe key for SMS imports
+  /** JSON array of tags ("Goa trip", "Reimbursable"), or null. Read and write through src/lib/tags.ts. */
+  tags: string | null;
 };
 
 export type InvestmentType =

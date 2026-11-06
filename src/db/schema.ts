@@ -85,6 +85,10 @@ const MIGRATIONS: string[] = [
     category_id TEXT,
     amount REAL NOT NULL
   );`,
+  // v6 — account balances match transfers by to_account_id too; without this they scan every transaction.
+  `CREATE INDEX idx_txn_to_account ON transactions(to_account_id);`,
+  // v7 — tags: a JSON array of labels that cut across categories (src/lib/tags.ts). Needs neon/migrations/0007.
+  `ALTER TABLE transactions ADD COLUMN tags TEXT;`,
 ];
 
 // Fixed ids so seeded categories are identical on every device and merge cleanly on sync.

@@ -6,9 +6,10 @@ import { Alert, Pressable, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { toast } from 'sonner-native';
 
-import { aiSmsReady, useAi } from '@/ai/client';
+import { aiReady, aiSmsReady, useAi } from '@/ai/client';
 import { categoryIcon, Icon } from '@/components/icons';
 import { AccountGrid, CategoryGrid } from '@/components/pickers';
+import { TagField } from '@/components/tag-field';
 import {
   Button,
   Card,
@@ -31,7 +32,7 @@ import { getSetting, listAccounts, listCategories } from '@/db/repo';
 import { cn } from '@/lib/cn';
 import { dateLabel, dayLabel, money, parseDate } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
-import { advanceSmsCursor, buildCandidates, importCandidates, type SmsCandidate } from '@/sms/import';
+import { advanceSmsCursor, aiTagSms, buildCandidates, importCandidates, type SmsCandidate } from '@/sms/import';
 import { periodRange, rangeLabel, type PeriodId, type Range } from '@/sms/period';
 import { useThemeColor } from '@/theme/useThemeColor';
 
@@ -53,6 +54,7 @@ export default function SmsImport() {
   const db = useSQLiteContext();
   const { data: accounts } = useLiveQuery(listAccounts, ['accounts']);
   const { data: categories } = useLiveQuery(listCategories, ['categories']);
+  const aiOn = useAi(aiReady);
   const ai = useAi(aiSmsReady);
   const insets = useSafeAreaInsets();
   const [success, primary, muted] = [useThemeColor('success'), useThemeColor('primary'), useThemeColor('fg-muted')];
@@ -404,6 +406,27 @@ export default function SmsImport() {
                 />
               </View>
             )}
+            <TagField
+              // One field per message, so AI picks for one SMS don't carry over to the next.
+              key={current.hash}
+              value={current.tags ?? []}
+              onChange={(tags) => update(current.hash, { tags })}
+              aiSuggest={
+                aiOn
+                  ? async (tagNames) => {
+                      const r = await aiTagSms(current, categories ?? [], tagNames);
+                      if (r.categoryId) update(current.hash, { categoryId: r.categoryId });
+                      return r.tags;
+                    }
+                  : undefined
+              }
+              context={{
+                categoryId: current.categoryId,
+                merchant: current.merchant,
+                date: current.sms.date,
+                text: [current.sms.body, categories?.find((c) => c.id === current.categoryId)?.name].filter(Boolean).join(' '),
+              }}
+            />
             <View className="gap-1.5">
               <Text variant="eyebrow" className="px-0.5">Message</Text>
               <View className="rounded-input bg-fill p-3">

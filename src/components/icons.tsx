@@ -21,6 +21,7 @@ export type IconName =
   | 'cart'
   | 'coffee'
   | 'search'
+  | 'tag'
   | 'camera'
   | 'close'
   | 'info'
@@ -191,6 +192,13 @@ function glyph(name: IconName, p: P, color: string) {
           <Path {...p} d="M3 10l9-6 9 6" />
           <Path {...p} d="M5 10v8M9 10v8M15 10v8M19 10v8" />
           <Path {...p} d="M3 20h18" />
+        </>
+      );
+    case 'tag':
+      return (
+        <>
+          <Path {...p} d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9Z" />
+          <Path {...p} d="M7.5 7.5h.01" />
         </>
       );
     case 'receipt':

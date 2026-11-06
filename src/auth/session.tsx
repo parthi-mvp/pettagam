@@ -57,6 +57,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signIn: async (email, password) => afterSignIn(await NeonAuth.signInWithEmail(email, password)),
       signUp: async (email, password, name) => afterSignIn(await NeonAuth.signUpWithEmail(email, password, name)),
       signOut: async () => {
+        // Finish any running sync (and upload what's queued) before wiping: a download landing after
+        // the wipe would leave this user's rows for the next account to upload. Once the session is
+        // gone, a new sync fails before it writes anything.
+        await syncNow(db).catch(() => {});
         await NeonAuth.signOut();
         await wipeLocalData(db);
         setState({ status: 'signedOut', user: null });

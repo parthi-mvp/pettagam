@@ -9,6 +9,7 @@ import {
   parseSetCookie,
   shouldApplyRemote,
   toServer,
+  uploadRows,
 } from '../src/sync/wire.ts';
 
 test('toServer strips server columns and parses details JSON', () => {
@@ -42,4 +43,26 @@ test('jwtExpiry reads exp claim', () => {
   const payload = Buffer.from(JSON.stringify({ sub: 'u', exp: 1700000000 })).toString('base64url');
   assert.equal(jwtExpiry(`h.${payload}.s`, (b) => Buffer.from(b, 'base64').toString()), 1700000000000);
   assert.equal(jwtExpiry('garbage'), 0);
+});
+
+test('uploadRows: one rejected row does not hold back the others', async () => {
+  const rejected = new Error('Data API 400: billing_day check');
+  const sent: string[] = [];
+  const upload = async (rows: Record<string, unknown>[]) => {
+    if (rows.some((r) => r.id === 'bad')) throw rejected;
+    sent.push(...rows.map((r) => String(r.id)));
+  };
+  const failed = await uploadRows([{ id: 'a' }, { id: 'bad' }, { id: 'b' }], upload, (e) => e === rejected);
+  assert.deepEqual(sent, ['a', 'b']);
+  assert.deepEqual([...failed.keys()], ['bad']);
+});
+
+test('uploadRows: other errors (offline, auth) are thrown, not swallowed', async () => {
+  const offline = new Error('Network request failed');
+  await assert.rejects(
+    uploadRows([{ id: 'a' }], async () => {
+      throw offline;
+    }, () => false),
+    offline
+  );
 });

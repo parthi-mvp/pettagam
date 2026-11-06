@@ -1,27 +1,25 @@
-import { ThemePicker } from '@/components/theme-picker';
-import { Chips, FormSection, Screen, SwitchRow } from '@/components/ui';
+import { FontPicker, ModePicker, TextSizePicker, ThemePicker } from '@/components/theme-picker';
+import { FormSection, Screen, SwitchRow } from '@/components/ui';
 import { useHapticsPreference } from '@/lib/haptics';
-import { useThemePreference, type ThemePreference } from '@/theme/themePreference';
 
 export default function AppearanceSettings() {
-  const theme = useThemePreference();
   const haptics = useHapticsPreference();
   return (
     <Screen>
+      <FormSection title="Mode">
+        <ModePicker />
+      </FormSection>
+
       <FormSection title="Colour theme">
         <ThemePicker />
       </FormSection>
 
-      <FormSection title="Mode">
-        <Chips<ThemePreference>
-          options={[
-            { value: 'system', label: 'Same as phone' },
-            { value: 'light', label: 'Light' },
-            { value: 'dark', label: 'Dark' },
-          ]}
-          value={theme.preference}
-          onChange={theme.setPreference}
-        />
+      <FormSection title="Font">
+        <FontPicker />
+      </FormSection>
+
+      <FormSection title="Text size">
+        <TextSizePicker />
       </FormSection>
 
       <FormSection title="Feel">

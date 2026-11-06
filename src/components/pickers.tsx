@@ -1,5 +1,8 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
+
+import type { BudgetStatus } from '@/budget/status';
+import { useLiveQuery } from '@/db/events';
 
 import { ACCOUNT_TYPE_LABELS, ACCOUNT_TYPE_ORDER, INVESTMENT_TYPE_LABELS, type Account, type AccountType, type InvestmentType } from '@/db/types';
 import { cn } from '@/lib/cn';
@@ -10,14 +13,11 @@ import { categoryIcon, Icon, type IconName } from './icons';
 import { BANK_KIND_LABEL, BANKS, matchBank, type Bank, type BankKind } from '@/catalog/banks';
 
 import { BankLogo } from './bank-logo';
+import { BudgetBar } from './budget-bar';
 import { PressableScale, Sheet, Text, TextInput, type SheetRef, IconTile, OptionRow } from './ui';
 
 type Option = { value: string; label: string; color?: string; icon?: string | null };
 
-/**
- * Compact category chooser: a field-shaped row showing the current pick; tapping opens a sheet
- * with a 3-column grid of icon tiles. Replaces the long chip list on the transaction form.
- */
 /** The closed state both pickers share: a field-shaped row with an icon tile, the current pick and a chevron. */
 function PickerRow({
   label,
@@ -74,11 +74,23 @@ export const ACCOUNT_ICON: Record<AccountType, IconName> = {
 /** Account chooser: same closed row; the sheet lists accounts grouped by type with bank · ••last4 under each. */
 export function AccountPicker({ label, accounts, value, onChange }: { label: string; accounts: Account[]; value: string | null; onChange: (v: string) => void }) {
   const sheet = useRef<SheetRef>(null);
+  const usage = useUsage('account_id');
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
   const current = accounts.find((a) => a.id === value) ?? null;
+
+  // Searching: one flat list. Otherwise your most-used accounts on top, then the rest by type.
+  const top = q || accounts.length <= SEARCH_FROM_ACCOUNTS ? [] : mostUsed(accounts, (a) => a.id, usage, 3);
+  const rest = accounts.filter((a) => !top.includes(a) && accountHit(a, q));
+  const groups = [
+    ...(top.length ? [{ title: 'Most used', accounts: top }] : []),
+    ...ACCOUNT_ORDER.map((t) => ({ title: ACCOUNT_TYPE_LABELS[t], accounts: rest.filter((a) => a.type === t) })).filter((g) => g.accounts.length),
+  ];
 
   const pick = (v: string) => {
     if (v !== value) haptic.selection();
     onChange(v);
+    setQuery('');
     sheet.current?.dismiss();
   };
 
@@ -95,113 +107,214 @@ export function AccountPicker({ label, accounts, value, onChange }: { label: str
       />
       <Sheet ref={sheet} title={label} scrollable lazy>
         <View className="gap-4 pb-4">
-          {ACCOUNT_ORDER.map((type) => {
-            const group = accounts.filter((a) => a.type === type);
-            if (group.length === 0) return null;
-            return (
-              <View key={type} className="gap-1">
-                <Text variant="eyebrow" className="px-1">
-                  {ACCOUNT_TYPE_LABELS[type]}
-                </Text>
-                {group.map((a) => {
-                  const active = a.id === value;
-                  const sub = [a.institution, a.last4 ? `••${a.last4}` : null].filter(Boolean).join(' · ');
-                  return (
-                    <OptionRow
-                      key={a.id}
-                      leading={<BankLogo institution={a.institution} fallback={ACCOUNT_ICON[type]} />}
-                      title={a.name}
-                      subtitle={sub}
-                      active={active}
-                      onPress={() => pick(a.id)}
-                    />
-                  );
-                })}
-              </View>
-            );
-          })}
+          {accounts.length > SEARCH_FROM_ACCOUNTS ? <SearchBox value={query} onChange={setQuery} placeholder="Search accounts" /> : null}
+          {groups.map((g) => (
+            <View key={g.title} className="gap-1">
+              <Text variant="eyebrow" className="px-1">
+                {g.title}
+              </Text>
+              {g.accounts.map((a) => (
+                <OptionRow
+                  key={a.id}
+                  leading={<BankLogo institution={a.institution} fallback={ACCOUNT_ICON[a.type]} />}
+                  title={a.name}
+                  subtitle={[a.institution, a.last4 ? `••${a.last4}` : null].filter(Boolean).join(' · ')}
+                  active={a.id === value}
+                  onPress={() => pick(a.id)}
+                />
+              ))}
+            </View>
+          ))}
+          {groups.length === 0 ? <NoMatch what="account" query={query} /> : null}
         </View>
       </Sheet>
     </View>
   );
 }
 
-/** Categories as a 3-column grid of icon tiles (inside the picker sheet, or inline in another sheet). */
-export function CategoryGrid({ options, value, onPick }: { options: Option[]; value: string | null; onPick: (v: string) => void }) {
-  const [primary, onPrimary] = useThemeColors(['primary', 'on-primary'] as const);
+/** How often each category / account is used in live transactions: choosers put your habits first. */
+export function useUsage(column: 'category_id' | 'account_id') {
+  const { data } = useLiveQuery(
+    (db) =>
+      db.getAllAsync<{ id: string; n: number }>(
+        `SELECT ${column} AS id, COUNT(*) AS n FROM transactions WHERE deleted = 0 AND ${column} IS NOT NULL GROUP BY ${column}`
+      ),
+    ['transactions'],
+    [column]
+  );
+  return useMemo(() => new Map((data ?? []).map((u) => [u.id, u.n])), [data]);
+}
+
+/** The `n` most-used items (used at least once), busiest first. */
+function mostUsed<T>(items: T[], id: (t: T) => string, usage: Map<string, number>, n: number) {
+  return items
+    .filter((t) => (usage.get(id(t)) ?? 0) > 0)
+    .sort((a, b) => usage.get(id(b))! - usage.get(id(a))!)
+    .slice(0, n);
+}
+
+/** Search and sections only pay off past a screenful; short lists show everything at once. */
+const SEARCH_FROM = 8;
+const SEARCH_FROM_ACCOUNTS = 6;
+const TOP_CATEGORIES = 4;
+
+const accountHit = (a: Account, q: string) =>
+  !q || [a.name, a.institution, a.last4, a.card_last4, ACCOUNT_TYPE_LABELS[a.type]].some((t) => t?.toLowerCase().includes(q));
+
+function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
+  const [subtle] = useThemeColors(['fg-subtle'] as const);
   return (
-    <View className="flex-row flex-wrap gap-2">
-      {options.map((o) => {
-        const active = o.value === value;
-        return (
-          <PressableScale
-            key={o.value}
-            scaleTo={0.96}
-            accessibilityRole="radio"
-            accessibilityLabel={o.label}
-            accessibilityState={{ checked: active }}
-            onPress={() => onPick(o.value)}
-            className={cn('w-[31%] grow items-center gap-1.5 rounded-[14px] border py-3', active ? 'border-primary bg-primary-soft' : 'border-line bg-surface')}>
-            <View className="h-10 w-10 items-center justify-center rounded-[12px]" style={{ backgroundColor: o.color ? `${o.color}22` : undefined }}>
-              <Icon name={categoryIcon(o.label, undefined, o.icon)} size={18} color={o.color ?? primary} />
-            </View>
-            <Text variant="caption" align="center" weight={active ? 'medium' : 'regular'} className={active ? 'text-primary-fg' : 'text-fg'} numberOfLines={2}>
-              {o.label}
-            </Text>
-            {active ? (
-              <View className="absolute right-1.5 top-1.5 h-4 w-4 items-center justify-center rounded-full bg-primary">
-                <Icon name="check" size={10} color={onPrimary} strokeWidth={3} />
-              </View>
-            ) : null}
-          </PressableScale>
-        );
-      })}
+    <View className="h-10 flex-row items-center gap-2 rounded-[12px] bg-fill px-3">
+      <Icon name="search" size={16} color={subtle} />
+      <TextInput
+        value={value}
+        onChangeText={onChange}
+        placeholder={placeholder}
+        accessibilityLabel={placeholder}
+        autoCorrect={false}
+        returnKeyType="search"
+        className="h-full min-w-0 flex-1"
+      />
+      {value ? (
+        <Pressable onPress={() => onChange('')} hitSlop={10} accessibilityRole="button" accessibilityLabel="Clear search">
+          <Icon name="close" size={16} color={subtle} />
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+const NoMatch = ({ what, query }: { what: string; query: string }) => (
+  <Text variant="small" align="center" className="py-2">
+    {`No ${what} matches “${query.trim()}”`}
+  </Text>
+);
+
+/** A small labelled block of tiles inside a chooser ("Most used", "All categories"). */
+function TileSection({ title, children }: { title?: string; children: ReactNode }) {
+  return (
+    <View className="gap-1.5">
+      {title ? (
+        <Text variant="caption" weight="medium" className="px-0.5">
+          {title}
+        </Text>
+      ) : null}
+      <View className="flex-row flex-wrap gap-2">{children}</View>
+    </View>
+  );
+}
+
+/** One category: icon and name in a compact tile, four to a row. Picked = tinted in the category's colour. */
+export function CategoryTile({ option, active, budget, onPress }: { option: Option; active: boolean; budget?: BudgetStatus; onPress: () => void }) {
+  const [primary] = useThemeColors(['primary'] as const);
+  const color = option.color ?? primary;
+  return (
+    <PressableScale
+      scaleTo={0.95}
+      accessibilityRole="radio"
+      accessibilityState={{ checked: active }}
+      accessibilityLabel={
+        budget ? `${option.label}, ${budget.state === 'over' ? 'over budget' : `${Math.round(budget.used * 100)}% of budget used`}` : option.label
+      }
+      onPress={onPress}
+      className={cn('w-[23%] items-center gap-1 rounded-[12px] border-[1.5px] px-1 py-2', !active && 'border-transparent bg-surface')}
+      style={active ? { borderColor: color, backgroundColor: `${color}1f` } : undefined}>
+      <IconTile icon={categoryIcon(option.label, undefined, option.icon)} color={option.color} size={30} />
+      <Text variant="caption" align="center" tone="default" weight={active ? 'medium' : 'regular'} numberOfLines={2}>
+        {option.label}
+      </Text>
+      {budget ? <BudgetBar used={budget.used} state={budget.state} thin className="w-3/5" /> : null}
+    </PressableScale>
+  );
+}
+
+/**
+ * Category chooser: search, then your most-used categories, then all the others, as compact tiles.
+ * Short lists (income) skip search and sections. `budgetOf` adds this month's budget line to a tile.
+ */
+export function CategoryGrid({
+  options,
+  value,
+  onPick,
+  budgetOf,
+}: {
+  options: Option[];
+  value: string | null;
+  onPick: (v: string) => void;
+  budgetOf?: (id: string) => BudgetStatus | undefined;
+}) {
+  const usage = useUsage('category_id');
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
+  const long = options.length > SEARCH_FROM;
+  const top = q || !long ? [] : mostUsed(options, (o) => o.value, usage, TOP_CATEGORIES);
+  const rest = options.filter((o) => !top.includes(o) && (!q || o.label.toLowerCase().includes(q)));
+  const tile = (o: Option) => <CategoryTile key={o.value} option={o} active={o.value === value} budget={budgetOf?.(o.value)} onPress={() => onPick(o.value)} />;
+  return (
+    <View className="gap-3">
+      {long ? <SearchBox value={query} onChange={setQuery} placeholder="Search categories" /> : null}
+      {top.length ? <TileSection title="Most used">{top.map(tile)}</TileSection> : null}
+      {rest.length ? <TileSection title={top.length ? 'All categories' : undefined}>{rest.map(tile)}</TileSection> : null}
+      {q && !rest.length ? <NoMatch what="category" query={query} /> : null}
     </View>
   );
 }
 
 /**
- * Accounts as 2-column tiles (bank logo, name, ••digits), for picking inside another sheet.
- * `digits` (from an SMS) floats the matching accounts first and tags them.
+ * Accounts as compact two-column tiles (logo, name, type · ••digits), for picking inside another
+ * sheet. Accounts the SMS `digits` match come first and say so, then the ones you use most.
  */
 export function AccountGrid({ accounts, value, onPick, digits }: { accounts: Account[]; value: string | null; onPick: (v: string) => void; digits?: string | null }) {
-  const onPrimary = useThemeColors(['on-primary'] as const)[0];
+  const [onPrimary] = useThemeColors(['on-primary'] as const);
+  const usage = useUsage('account_id');
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
   const matches = (a: Account) => !!digits && (a.last4 === digits || a.card_last4 === digits);
-  const sorted = [...accounts].sort((a, b) => Number(matches(b)) - Number(matches(a)) || ACCOUNT_ORDER.indexOf(a.type) - ACCOUNT_ORDER.indexOf(b.type));
+  const sorted = accounts
+    .filter((a) => accountHit(a, q))
+    .sort(
+      (a, b) =>
+        Number(matches(b)) - Number(matches(a)) ||
+        (usage.get(b.id) ?? 0) - (usage.get(a.id) ?? 0) ||
+        ACCOUNT_ORDER.indexOf(a.type) - ACCOUNT_ORDER.indexOf(b.type)
+    );
+  if (accounts.length === 0) return <Text variant="small">Add an account first (More → Accounts).</Text>;
   return (
-    <View className="flex-row flex-wrap gap-2">
-      {sorted.map((a) => {
-        const active = a.id === value;
-        const sub = [ACCOUNT_TYPE_LABELS[a.type], a.last4 ? `••${a.last4}` : null].filter(Boolean).join(' · ');
-        return (
-          <PressableScale
-            key={a.id}
-            scaleTo={0.97}
-            accessibilityRole="radio"
-            accessibilityLabel={`${a.name}${a.last4 ? `, ending ${a.last4}` : ''}`}
-            accessibilityState={{ checked: active }}
-            onPress={() => onPick(a.id)}
-            className={cn('basis-[47%] grow gap-2 rounded-[14px] border p-2.5', active ? 'border-primary bg-primary-soft' : 'border-line bg-surface')}>
-            <View className="flex-row items-center justify-between">
-              <BankLogo institution={a.institution} fallback={ACCOUNT_ICON[a.type]} size={32} />
+    <View className="gap-2">
+      {accounts.length > SEARCH_FROM_ACCOUNTS ? <SearchBox value={query} onChange={setQuery} placeholder="Search accounts" /> : null}
+      <View className="flex-row flex-wrap gap-2">
+        {sorted.map((a) => {
+          const active = a.id === value;
+          const digitsText = a.last4 ? `••${a.last4}` : null;
+          const sub = matches(a) ? `Matches ••${digits}` : [ACCOUNT_TYPE_LABELS[a.type], digitsText].filter(Boolean).join(' · ');
+          return (
+            <PressableScale
+              key={a.id}
+              scaleTo={0.97}
+              accessibilityRole="radio"
+              accessibilityLabel={`${a.name}${a.last4 ? `, ending ${a.last4}` : ''}${matches(a) ? ', matches the SMS' : ''}`}
+              accessibilityState={{ checked: active }}
+              onPress={() => onPick(a.id)}
+              className={cn('w-[48.5%] flex-row items-center gap-2 rounded-[12px] border px-2 py-2', active ? 'border-primary bg-primary-soft' : 'border-line bg-surface')}>
+              <BankLogo institution={a.institution} fallback={ACCOUNT_ICON[a.type]} size={28} />
+              <View className="min-w-0 flex-1">
+                <Text weight="medium" numberOfLines={1} className={active ? 'text-primary-fg' : undefined}>
+                  {a.name}
+                </Text>
+                <Text variant="caption" numberOfLines={1} tone={matches(a) ? 'brass' : undefined}>
+                  {sub}
+                </Text>
+              </View>
               {active ? (
-                <View className="h-5 w-5 items-center justify-center rounded-full bg-primary">
-                  <Icon name="check" size={12} color={onPrimary} strokeWidth={3} />
-                </View>
-              ) : matches(a) ? (
-                <View className="rounded-full bg-brass-soft px-2 py-0.5">
-                  <Text variant="caption" weight="medium" tone="brass">Match</Text>
+                <View className="h-4 w-4 items-center justify-center rounded-full bg-primary">
+                  <Icon name="check" size={10} color={onPrimary} strokeWidth={3} />
                 </View>
               ) : null}
-            </View>
-            <View className="gap-0.5">
-              <Text weight="medium" numberOfLines={1} className={active ? 'text-primary-fg' : undefined}>{a.name}</Text>
-              <Text variant="caption" numberOfLines={1}>{sub}</Text>
-            </View>
-          </PressableScale>
-        );
-      })}
-      {accounts.length === 0 ? <Text variant="small">Add an account first (More → Accounts).</Text> : null}
+            </PressableScale>
+          );
+        })}
+      </View>
+      {q && !sorted.length ? <NoMatch what="account" query={query} /> : null}
     </View>
   );
 }
@@ -406,9 +519,7 @@ export function BankPicker({
       />
       <Sheet ref={sheet} title={label} scrollable lazy>
         <View className="gap-4 pb-4">
-          <View className="h-10 flex-row items-center gap-2 rounded-[12px] bg-fill px-3">
-            <TextInput value={query} onChangeText={setQuery} placeholder="Search banks, cards, wallets" autoCorrect={false} className="h-full min-w-0 flex-1" />
-          </View>
+          <SearchBox value={query} onChange={setQuery} placeholder="Search banks, cards, wallets" />
           {q && !exact ? (
             <OptionRow title={`Use “${query.trim()}”`} subtitle="Not in the list (co-op bank, other)" leading={<BankLogo fallback={fallbackIcon} size={36} />} onPress={() => pick(query.trim())} />
           ) : null}

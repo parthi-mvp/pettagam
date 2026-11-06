@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useFonts } from 'expo-font';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { SQLiteProvider } from 'expo-sqlite';
+import { SQLiteProvider, type SQLiteDatabase } from 'expo-sqlite';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaListener } from 'react-native-safe-area-context';
@@ -11,27 +11,40 @@ import { Uniwind, useUniwind } from 'uniwind';
 import '../global.css';
 
 import { AuthProvider, useAuth } from '@/auth/session';
-import { AppToaster, BackButton } from '@/components/ui';
-import { APP_FONTS } from '@/constants/fonts';
-import { FontFamily } from '@/constants/theme';
+import { AppToaster } from '@/components/ui';
+import { StackHeader } from '@/components/ui/StackHeader';
+import { startupFonts } from '@/constants/fonts';
 import { migrate } from '@/db/schema';
 import { useTheme } from '@/hooks/use-theme';
 import { AutoSync } from '@/sync/auto-sync';
 import { AppLockGate } from '@/components/app-lock-gate';
 import { useWelcomeSeen } from '@/onboarding/welcome-seen';
 import { restoreAppLock } from '@/security/app-lock';
-import { restoreThemePreference } from '@/theme/themePreference';
+import { restoreThemePreference, useThemePreference } from '@/theme/themePreference';
 
 SplashScreen.preventAutoHideAsync();
 // Saved Light / Dark / System choice, applied before the first frame (no flash).
 restoreThemePreference();
 restoreAppLock();
 
+/**
+ * Module-level on purpose: SQLiteProvider closes and reopens the database whenever `onInit` changes,
+ * unmounting the whole app (back to Home, "Access to closed resource"). An inline function would be a
+ * new one on every RootLayout render, and a theme switch re-renders RootLayout.
+ */
+async function initDatabase(db: SQLiteDatabase) {
+  try {
+    await migrate(db);
+  } finally {
+    SplashScreen.hideAsync();
+  }
+}
+
 export default function RootLayout() {
   const { theme } = useUniwind();
   const c = useTheme();
   // Splash stays up until fonts are in (or failed: system font fallback) and the DB is migrated.
-  const [fontsLoaded, fontError] = useFonts(APP_FONTS);
+  const [fontsLoaded, fontError] = useFonts(startupFonts(useThemePreference.getState().font));
   if (!fontsLoaded && !fontError) return null;
 
   const base = theme === 'dark' ? DarkTheme : DefaultTheme;
@@ -45,15 +58,7 @@ export default function RootLayout() {
       <GestureHandlerRootView style={{ flex: 1 }}>
         <KeyboardProvider>
         <ThemeProvider value={navTheme}>
-          <SQLiteProvider
-            databaseName="pettagam.db"
-            onInit={async (db) => {
-              try {
-                await migrate(db);
-              } finally {
-                SplashScreen.hideAsync();
-              }
-            }}>
+          <SQLiteProvider databaseName="pettagam.db" onInit={initDatabase}>
             <AuthProvider>
               <AutoSync />
               <Routes />
@@ -69,7 +74,6 @@ export default function RootLayout() {
 
 function Routes() {
   const { status } = useAuth();
-  const c = useTheme();
   const welcomeSeen = useWelcomeSeen((s) => s.seen);
   const signedIn = status === 'signedIn';
   // Each sign-in resets the flag, so the next sign-out opens on the welcome screens again.
@@ -80,18 +84,8 @@ function Routes() {
   return (
     <>
     <Stack
-      screenOptions={{
-        headerBackButtonDisplayMode: 'minimal',
-        headerShadowVisible: false,
-        // One quiet header on both platforms: centred semibold title on the canvas, back arrow in ink.
-        headerTitleAlign: 'center',
-        headerTitleStyle: { fontFamily: FontFamily[500], fontSize: 17 },
-        headerTintColor: c.text,
-        headerStyle: { backgroundColor: c.background },
-        // The app's round back button on every pushed screen (forms, settings, Accounts, Reports…).
-        headerLeft: ({ canGoBack }) => (canGoBack ? <BackButton /> : null),
-        headerBackVisible: false,
-      }}>
+      // A JS header (centred title, the app's round back button): the native one crashes on a theme switch (see StackHeader).
+      screenOptions={{ header: (props) => <StackHeader {...props} /> }}>
       <Stack.Protected guard={signedIn}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false, title: 'Home' }} />
         <Stack.Screen name="transaction-form" options={{ presentation: 'modal', title: 'Transaction' }} />
@@ -104,6 +98,8 @@ function Routes() {
         <Stack.Screen name="accounts" options={{ title: 'Accounts' }} />
         <Stack.Screen name="reports" options={{ title: 'Reports' }} />
         <Stack.Screen name="categories" options={{ title: 'Categories' }} />
+        <Stack.Screen name="tags" options={{ title: 'Tags' }} />
+        <Stack.Screen name="tag" options={{ title: 'Tag' }} />
         <Stack.Screen name="budgets" options={{ title: 'Budgets' }} />
         <Stack.Screen name="budget-form" options={{ presentation: 'modal', title: 'Budget' }} />
         <Stack.Screen name="category-form" options={{ presentation: 'modal', title: 'Category' }} />
@@ -112,6 +108,8 @@ function Routes() {
         <Stack.Screen name="settings/sync" options={{ title: 'Sync & backup' }} />
         <Stack.Screen name="settings/sms" options={{ title: 'Bank SMS alerts' }} />
         <Stack.Screen name="settings/developer" options={{ title: 'Developer tools' }} />
+        <Stack.Screen name="settings/sms-card-test" options={{ title: 'New-SMS card' }} />
+        <Stack.Screen name="settings/sms-lab" options={{ title: 'Category & tag tester' }} />
         <Stack.Screen name="settings/security" options={{ title: 'App lock' }} />
       </Stack.Protected>
       {/* Signed out: the welcome screens come first, every time; sign-in is reached from them. */}

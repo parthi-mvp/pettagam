@@ -14,14 +14,17 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 
 import { Icon } from '@/components/icons';
 import { AccountGrid, CategoryGrid } from '@/components/pickers';
+import { TagField } from '@/components/tag-field';
 import { Button, Field, IconTile, SegmentedControl, Text } from '@/components/ui';
-import { APP_FONTS } from '@/constants/fonts';
+import { startupFonts } from '@/constants/fonts';
+import { useThemePreference } from '@/theme/themePreference';
 import { getSetting, listAccounts, listCategories } from '@/db/repo';
 import { migrate } from '@/db/schema';
 import type { Account, Category } from '@/db/types';
 import { money } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
-import { buildCandidates, importCandidates, type SmsCandidate } from '@/sms/import';
+import { aiTagSms, buildCandidates, importCandidates, type SmsCandidate } from '@/sms/import';
+import { aiReady, useAi } from '@/ai/client';
 import type { RawSms } from '@/sms/parser';
 import { syncNow } from '@/sync/neon-sync';
 import { useThemeColors } from '@/theme/useThemeColor';
@@ -30,7 +33,7 @@ export type QuickAddProps = { address: string; body: string; date: number };
 type Kind = 'expense' | 'income' | 'atm';
 
 export function QuickAddRoot(props: QuickAddProps) {
-  const [fontsLoaded, fontError] = useFonts(APP_FONTS);
+  const [fontsLoaded, fontError] = useFonts(startupFonts(useThemePreference.getState().font));
   if (!fontsLoaded && !fontError) return null;
   return (
     <SafeAreaProvider>
@@ -69,6 +72,7 @@ function QuickAddCard({ address, body, date }: QuickAddProps) {
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [success, muted] = useThemeColors(['success', 'fg-muted'] as const);
+  const ai = useAi(aiReady);
 
   useEffect(() => {
     (async () => {
@@ -214,6 +218,26 @@ function QuickAddCard({ address, body, date }: QuickAddProps) {
                     />
                   </View>
                 )}
+
+                <TagField
+                  value={item.tags ?? []}
+                  onChange={(tags) => update({ tags })}
+                  aiSuggest={
+                    ai
+                      ? async (tagNames) => {
+                          const r = await aiTagSms(item, categories, tagNames);
+                          if (r.categoryId) update({ categoryId: r.categoryId });
+                          return r.tags;
+                        }
+                      : undefined
+                  }
+                  context={{
+                    categoryId: item.categoryId,
+                    merchant: item.merchant,
+                    date: item.sms.date,
+                    text: [item.sms.body, categories.find((c) => c.id === item.categoryId)?.name].filter(Boolean).join(' '),
+                  }}
+                />
 
                 <View className="rounded-input bg-fill p-3">
                   <Text variant="small" tone="default" numberOfLines={4} selectable>{item.sms.body}</Text>

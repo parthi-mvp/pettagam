@@ -78,3 +78,19 @@ export function readAiPicks(text: string, count: number): Map<number, string> {
   }
   return out;
 }
+
+/**
+ * {"category": …, "tags": […], "new_tag": …} → an exact category name (or null) and up to 3 tags from
+ * the user's list, plus at most one new tag the AI proposed (short, not a category name). Untrusted input.
+ */
+export function readAiSuggestion(text: string, categories: string[], tags: string[]): { category: string | null; tags: string[] } {
+  const j = readJson(text) ?? {};
+  const picked: string[] = [];
+  for (const t of Array.isArray(j.tags) ? j.tags : []) {
+    const name = matchName(t, tags);
+    if (name && !picked.includes(name)) picked.push(name);
+  }
+  const fresh = str(j.new_tag, 30)?.replace(/^#+\s*/, '');
+  if (fresh && fresh.length >= 2 && !matchName(fresh, categories)) picked.push(matchName(fresh, tags) ?? fresh);
+  return { category: matchName(j.category, categories), tags: [...new Set(picked)].slice(0, 3) };
+}

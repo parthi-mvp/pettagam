@@ -2,6 +2,7 @@ import * as Crypto from 'expo-crypto';
 import type { SQLiteBindValue, SQLiteDatabase } from 'expo-sqlite';
 
 import { parseDetails, type ChitDetails } from '@/lib/invest';
+import { parseTags, replaceTag, tagsColumn } from '@/lib/tags';
 
 import { emitChange } from './events';
 import type {
@@ -48,6 +49,9 @@ export async function save<T extends TableName>(
     updated_at: now,
     deleted: 0,
   };
+  // Queued before the write (a crash in between must not leave an edit that never uploads) and again
+  // after it (a new seq, so an upload that read the old row can't clear the queue entry).
+  await enqueue(db, table, id);
   await upsertRaw(db, table, row);
   await enqueue(db, table, id);
   if (!opts.silent) emitChange(table);
@@ -71,6 +75,7 @@ export async function upsertRaw(db: SQLiteDatabase, table: TableName, row: Recor
 }
 
 export async function softDelete(db: SQLiteDatabase, table: TableName, id: string) {
+  await enqueue(db, table, id); // before and after, as in save()
   await db.runAsync(`UPDATE ${table} SET deleted = 1, updated_at = ? WHERE id = ?`, [Date.now(), id]);
   await enqueue(db, table, id);
   if (table === 'investments') {
@@ -105,6 +110,67 @@ export const listInvestmentEntries = (db: SQLiteDatabase, investmentId: string) 
     [investmentId]
   );
 
+/** SQL condition: transaction `t` carries the tag bound to `?` (any case). */
+const HAS_TAG = "EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(t.tags) THEN t.tags ELSE '[]' END) WHERE lower(value) = lower(?))";
+
+export type TagTotal = { tag: string; count: number; spent: number; earned: number; first: number; last: number };
+
+/** Every tag in use with its totals, most recently used first. Transfers count toward `count` only. */
+export const tagTotals = (db: SQLiteDatabase) =>
+  db.getAllAsync<TagTotal>(
+    `SELECT MIN(j.value) AS tag, COUNT(*) AS count,
+            COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount END), 0) AS spent,
+            COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount END), 0) AS earned,
+            MIN(t.date) AS first, MAX(t.date) AS last
+     FROM transactions t, json_each(CASE WHEN json_valid(t.tags) THEN t.tags ELSE '[]' END) j
+     WHERE t.deleted = 0 AND t.tags IS NOT NULL
+     GROUP BY lower(j.value) ORDER BY last DESC`
+  );
+
+const HINT_WINDOW = 3 * 86_400_000;
+
+/**
+ * Your own tags that fit an entry, best first. Score: 3 per past entry with the same merchant,
+ * 1 per entry in the same category, and 2 per entry within 3 days, but only for a tag on 2+ entries
+ * in those days: an ongoing trip covers food, fuel…, while a one-off tag ("Dinner") shouldn't follow you.
+ */
+export async function tagHints(db: SQLiteDatabase, ctx: { categoryId?: string | null; merchant?: string | null; date: number; excludeId?: string }) {
+  const merchant = ctx.merchant?.trim() || null;
+  const rows = await db.getAllAsync<{ tag: string }>(
+    `SELECT MIN(j.value) AS tag,
+            SUM(CASE WHEN ? IS NOT NULL AND lower(t.merchant) = lower(?) THEN 3 ELSE 0 END)
+          + SUM(CASE WHEN t.category_id = ? THEN 1 ELSE 0 END)
+          + (CASE WHEN SUM(ABS(t.date - ?) <= ?) >= 2 THEN 2 * SUM(ABS(t.date - ?) <= ?) ELSE 0 END) AS score,
+            MAX(t.date) AS last
+     FROM transactions t, json_each(CASE WHEN json_valid(t.tags) THEN t.tags ELSE '[]' END) j
+     WHERE t.deleted = 0 AND t.tags IS NOT NULL AND t.id != ?
+     GROUP BY lower(j.value) HAVING score > 0 ORDER BY score DESC, last DESC LIMIT 6`,
+    [merchant, merchant, ctx.categoryId ?? null, ctx.date, HINT_WINDOW, ctx.date, HINT_WINDOW, ctx.excludeId ?? '']
+  );
+  return rows.map((r) => r.tag);
+}
+
+/** Spending under one tag, split by category (the "where did the trip money go" view). */
+export const tagCategoryBreakdown = (db: SQLiteDatabase, tag: string) =>
+  db.getAllAsync<{ id: string | null; name: string; color: string; icon: string | null; total: number }>(
+    `SELECT t.category_id AS id, COALESCE(c.name, 'Uncategorised') AS name, COALESCE(c.color, '#8E8E93') AS color, c.icon AS icon,
+            SUM(t.amount) AS total
+     FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
+     WHERE t.deleted = 0 AND t.type = 'expense' AND ${HAS_TAG}
+     GROUP BY t.category_id ORDER BY total DESC`,
+    [tag]
+  );
+
+/** Rename a tag on every transaction (merging into `to` if that tag exists), or remove it (`to` = null). */
+export async function renameTag(db: SQLiteDatabase, from: string, to: string | null) {
+  const rows = await db.getAllAsync<Transaction>(`SELECT * FROM transactions t WHERE t.deleted = 0 AND ${HAS_TAG}`, [from]);
+  for (const { created_at: _c, updated_at: _u, deleted: _d, ...row } of rows) {
+    await save(db, 'transactions', { ...row, tags: tagsColumn(replaceTag(parseTags(row.tags), from, to)) }, { silent: true });
+  }
+  if (rows.length) emitChange('transactions');
+  return rows.length;
+}
+
 export type TxnRow = Transaction & {
   account_name: string;
   to_account_name: string | null;
@@ -115,7 +181,7 @@ export type TxnRow = Transaction & {
 
 export function listTransactions(
   db: SQLiteDatabase,
-  f: { from?: number; to?: number; accountId?: string; search?: string; limit?: number } = {}
+  f: { from?: number; to?: number; accountId?: string; search?: string; tag?: string; limit?: number } = {}
 ) {
   const where = ['t.deleted = 0'];
   const params: SQLiteBindValue[] = [];
@@ -132,9 +198,13 @@ export function listTransactions(
     params.push(f.accountId, f.accountId);
   }
   if (f.search) {
-    where.push('(t.merchant LIKE ? OR t.note LIKE ? OR c.name LIKE ?)');
+    where.push('(t.merchant LIKE ? OR t.note LIKE ? OR c.name LIKE ? OR t.tags LIKE ?)');
     const q = `%${f.search}%`;
-    params.push(q, q, q);
+    params.push(q, q, q, q);
+  }
+  if (f.tag) {
+    where.push(HAS_TAG);
+    params.push(f.tag);
   }
   params.push(f.limit ?? 500);
   return db.getAllAsync<TxnRow>(

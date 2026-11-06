@@ -59,6 +59,35 @@ export function shouldApplyRemote(remoteUpdatedAt: number, local: { updated_at: 
   return remoteUpdatedAt >= local.updated_at;
 }
 
+/**
+ * Upload rows in one request. If the server rejects the batch, retry row by row so one bad row
+ * can't hold back the rest. Returns the ids still rejected, with the server's reason.
+ * Any other error (offline, auth, missing table) is thrown as is.
+ */
+export async function uploadRows(
+  rows: Record<string, unknown>[],
+  upload: (rows: Record<string, unknown>[]) => Promise<void>,
+  isRejection: (e: unknown) => boolean
+): Promise<Map<string, string>> {
+  const failed = new Map<string, string>();
+  if (rows.length === 0) return failed;
+  try {
+    await upload(rows);
+    return failed;
+  } catch (e) {
+    if (!isRejection(e)) throw e;
+  }
+  for (const row of rows) {
+    try {
+      await upload([row]);
+    } catch (e) {
+      if (!isRejection(e)) throw e;
+      failed.set(String(row.id), e instanceof Error ? e.message : String(e));
+    }
+  }
+  return failed;
+}
+
 /** Split a (possibly comma-joined) Set-Cookie header into "name=value" pairs. */
 export function parseSetCookie(header: string | null): Record<string, string> {
   const out: Record<string, string> = {};

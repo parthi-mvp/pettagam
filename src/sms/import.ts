@@ -2,14 +2,16 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import { toast } from 'sonner-native';
 
 import { aiSmsReady } from '@/ai/client';
-import { aiReadSms } from '@/ai/features';
+import { aiReadSms, aiSuggestCategoryAndTags } from '@/ai/features';
 import { emitChange } from '@/db/events';
 import { getSetting, listAccounts, listCategories, save, setSetting } from '@/db/repo';
 import { ensureCashAccount } from '@/db/cash';
 import { seedCategoryId } from '@/db/schema';
 import type { Account, Category } from '@/db/types';
 
-import { matchAccount } from './match';
+import { tagsColumn } from '@/lib/tags';
+
+import { learnedCategory, matchAccount, type PastCategory } from './match';
 import { findLast4, isAtmWithdrawal, looksLikeTxn, parseSms, smsHash, type ParsedSms, type RawSms } from './parser';
 
 export type SmsCandidate = ParsedSms & {
@@ -18,14 +20,46 @@ export type SmsCandidate = ParsedSms & {
   categoryId: string | null;
   selected: boolean;
   ai?: boolean; // read or categorised by the AI
+  tags?: string[]; // picked on the review card
 };
+
+/** The category each merchant last got, newest first, so imports repeat your own choices. */
+const pastCategories = (db: SQLiteDatabase) =>
+  db.getAllAsync<PastCategory>(
+    `SELECT t.merchant, t.category_id, c.kind FROM transactions t
+     JOIN categories c ON c.id = t.category_id AND c.deleted = 0
+     WHERE t.deleted = 0 AND t.merchant IS NOT NULL AND t.type IN ('expense', 'income')
+     ORDER BY t.date DESC LIMIT 5000`
+  );
+
+/** Your last choice for this merchant beats the keyword rules; the AI only sees what both miss. */
+function pickCategory(p: ParsedSms, history: PastCategory[], catIds: Set<string>) {
+  const rule = p.categoryHint ? seedCategoryId(p.categoryHint) : null;
+  const ruleId = rule && catIds.has(rule) ? rule : null;
+  const learnedId = p.atm ? null : learnedCategory(history, p.merchant, p.type);
+  return { learnedId, ruleId, categoryId: learnedId ?? ruleId };
+}
+
+export type SmsExplain = { parsed: ParsedSms | null; learnedId: string | null; ruleId: string | null; categoryId: string | null; accountId: string | null };
+
+/**
+ * Developer tools: what the import would make of one SMS, step by step. No AI, no duplicate check
+ * (old, already-imported messages can be tested too), nothing saved.
+ */
+export async function explainSms(db: SQLiteDatabase, sms: RawSms): Promise<SmsExplain> {
+  const [accounts, categories, history] = await Promise.all([listAccounts(db), listCategories(db), pastCategories(db)]);
+  const parsed = parseSms(sms);
+  if (!parsed) return { parsed: null, learnedId: null, ruleId: null, categoryId: null, accountId: null };
+  return { parsed, ...pickCategory(parsed, history, new Set(categories.map((c) => c.id))), accountId: matchAccount(accounts, parsed)?.id ?? null };
+}
 
 /** Also used by "paste SMS" on iOS / when the native module isn't available. */
 export async function buildCandidates(db: SQLiteDatabase, inbox: RawSms[]): Promise<SmsCandidate[]> {
-  const [accounts, categories, existing] = await Promise.all([
+  const [accounts, categories, existing, history] = await Promise.all([
     listAccounts(db),
     listCategories(db),
     db.getAllAsync<{ sms_hash: string }>('SELECT sms_hash FROM transactions WHERE sms_hash IS NOT NULL'),
+    pastCategories(db),
   ]);
   const seen = new Set(existing.map((e) => e.sms_hash));
   const catIds = new Set(categories.map((c) => c.id));
@@ -45,22 +79,21 @@ export async function buildCandidates(db: SQLiteDatabase, inbox: RawSms[]): Prom
     if (seen.has(p.hash)) continue;
     seen.add(p.hash);
     const account = matchAccount(accounts, p);
-    const catId = p.categoryHint ? seedCategoryId(p.categoryHint) : null;
     out.push({
       ...p,
       sms,
       accountId: account?.id ?? null,
-      categoryId: catId && catIds.has(catId) ? catId : null,
+      categoryId: pickCategory(p, history, catIds).categoryId,
       selected: account != null,
     });
   }
   // AI is best-effort: on failure keep the rule-based results and say why.
-  if (useAi) await aiFill(out, misses, accounts, categories).catch((e) => toast.error(`AI skipped: ${e instanceof Error ? e.message : e}`));
+  if (useAi) await aiFill(out, misses, accounts, categories, history).catch((e) => toast.error(`AI skipped: ${e instanceof Error ? e.message : e}`));
   return out;
 }
 
 /** Ask the AI about messages the rules couldn't read, and for categories the rules couldn't guess. */
-async function aiFill(out: SmsCandidate[], misses: RawSms[], accounts: Account[], categories: Category[]) {
+async function aiFill(out: SmsCandidate[], misses: RawSms[], accounts: Account[], categories: Category[], history: PastCategory[]) {
   const uncategorised = out.filter((c) => !c.categoryId);
   const batch = [...misses, ...uncategorised.map((c) => c.sms)];
   if (!batch.length) return;
@@ -83,7 +116,8 @@ async function aiFill(out: SmsCandidate[], misses: RawSms[], accounts: Account[]
         hash: smsHash(sms),
       };
       const account = matchAccount(accounts, p);
-      out.push({ ...p, sms, accountId: account?.id ?? null, categoryId: catId(it.category, it.type), selected: account != null, ai: true });
+      const learned = p.atm ? null : learnedCategory(history, it.merchant, it.type);
+      out.push({ ...p, sms, accountId: account?.id ?? null, categoryId: learned ?? catId(it.category, it.type), selected: account != null, ai: true });
     } else {
       const c = uncategorised[it.i - misses.length];
       const id = it.type === c.type ? catId(it.category, c.type) : null;
@@ -91,6 +125,17 @@ async function aiFill(out: SmsCandidate[], misses: RawSms[], accounts: Account[]
     }
   }
   if (misses.length) out.sort((a, b) => b.sms.date - a.sms.date);
+}
+
+/**
+ * Ask the AI about one SMS the user is reviewing (they tapped "Ask AI", so this one message is sent,
+ * redacted). Returns its tags from `tagNames`, and a category id only when the SMS has none yet.
+ */
+export async function aiTagSms(c: SmsCandidate, categories: Category[], tagNames: string[]) {
+  const mine = categories.filter((x) => x.kind === c.type);
+  const r = await aiSuggestCategoryAndTags([c.merchant, c.sms.body].filter(Boolean).join(' '), c.type, mine.map((x) => x.name), tagNames);
+  const categoryId = c.categoryId ? null : (mine.find((x) => x.name === r.category)?.id ?? null);
+  return { tags: r.tags, categoryId };
 }
 
 /**
@@ -136,6 +181,7 @@ export async function importCandidates(db: SQLiteDatabase, items: SmsCandidate[]
         note: c.sms.body.slice(0, 200),
         source: 'sms',
         sms_hash: c.hash,
+        tags: tagsColumn(c.tags ?? []),
       },
       { silent: true }
     );

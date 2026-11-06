@@ -13,7 +13,7 @@ import { paletteById } from '@/theme/palettes';
 import { LOCK_AFTER, useAppLock } from '@/security/app-lock';
 import { useThemePreference } from '@/theme/themePreference';
 
-const MODE_LABEL = { system: 'Same as phone', light: 'Light', dark: 'Dark' } as const;
+const MODE_LABEL = { system: 'System', light: 'Light', dark: 'Dark' } as const;
 const SYNC_LABEL: Record<SyncStatus['state'], string> = { idle: 'Up to date', syncing: 'Syncing…', offline: 'Offline', error: 'Sync problem' };
 
 /** A captioned group of rows, iOS-settings style: small label above one card. */
@@ -81,6 +81,8 @@ export default function More() {
         <Row icon="trend" title="Budgets" subtitle="Monthly limits and what’s left" onPress={() => router.push('/budgets')} />
         <Divider />
         <Row icon="bag" title="Categories" subtitle="Icons and colours for your spending" onPress={() => router.push('/categories')} />
+        <Divider />
+        <Row icon="tag" title="Tags" subtitle="Trips, events and claims across categories" onPress={() => router.push('/tags')} />
         {aiOn ? (
           <>
             <Divider />
@@ -127,7 +129,7 @@ export default function More() {
 
       {__DEV__ ? (
         <Group title="Developer">
-          <Row icon="settings" title="Developer tools" subtitle="Test the new-SMS card and notification" onPress={() => router.push('/settings/developer')} />
+          <Row icon="settings" title="Developer tools" subtitle="Testing tools for this build" onPress={() => router.push('/settings/developer')} />
         </Group>
       ) : null}
 

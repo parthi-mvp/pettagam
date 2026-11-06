@@ -3,6 +3,7 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import { accountBalances, listAccounts, listInvestments } from '@/db/repo';
 import { chitPlan, chitSummary, type CashEntry } from '@/lib/chit';
 import { parseDetails } from '@/lib/invest';
+import { parseTags } from '@/lib/tags';
 import { INVESTMENT_TYPE_LABELS, isCardLike, isLiability, type InvestmentType } from '@/db/types';
 import { money, monthLabel, monthRange } from '@/lib/format';
 
@@ -177,14 +178,16 @@ export async function insights(db: SQLiteDatabase): Promise<string[]> {
 export async function exportCsv(db: SQLiteDatabase): Promise<string> {
   const rows = await db.getAllAsync<Record<string, string | number | null>>(
     `SELECT date(t.date/1000,'unixepoch','localtime') AS date, t.type, t.amount, a.name AS account,
-            ta.name AS to_account, c.name AS category, t.merchant, t.note, t.source
+            ta.name AS to_account, c.name AS category, t.merchant, t.note, t.source, t.tags
      FROM transactions t LEFT JOIN accounts a ON a.id=t.account_id LEFT JOIN accounts ta ON ta.id=t.to_account_id
      LEFT JOIN categories c ON c.id=t.category_id WHERE t.deleted=0 ORDER BY t.date DESC`
   );
-  const cols = ['date', 'type', 'amount', 'account', 'to_account', 'category', 'merchant', 'note', 'source'];
+  const cols = ['date', 'type', 'amount', 'account', 'to_account', 'category', 'merchant', 'note', 'source', 'tags'];
   const esc = (v: unknown) => {
     const s = v == null ? '' : String(v);
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
-  return [cols.join(','), ...rows.map((r) => cols.map((c) => esc(r[c])).join(','))].join('\n');
+  // Tags as "Goa trip; Reimbursable" rather than raw JSON.
+  const cell = (r: Record<string, string | number | null>, c: string) => (c === 'tags' ? parseTags(r.tags as string | null).join('; ') : r[c]);
+  return [cols.join(','), ...rows.map((r) => cols.map((c) => esc(cell(r, c))).join(','))].join('\n');
 }

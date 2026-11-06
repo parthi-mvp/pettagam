@@ -9,7 +9,7 @@ const CONF = 'ai.config';
 export type AiLang = 'en' | 'ta';
 export type AiConfig = { enabled: boolean; sms: boolean; lang: AiLang; baseUrl: string; model: string };
 // SMS off by default: bank alerts are the most personal thing the AI could see, so it's opt-in.
-export const AI_DEFAULTS: AiConfig = { enabled: false, sms: false, lang: 'en', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4.1-mini' };
+export const AI_DEFAULTS: AiConfig = { enabled: false, sms: false, lang: 'en', baseUrl: 'https://api.openai.com/v1', model: 'gpt-6-luna' };
 
 type AiState = AiConfig & { hasKey: boolean; save: (conf: AiConfig, apiKey?: string | null) => Promise<void> };
 

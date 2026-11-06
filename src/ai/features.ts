@@ -10,7 +10,7 @@ import { categoryBreakdown, insights, monthlyTrend, netWorth, topMerchants } fro
 import { redactSms } from '@/sms/parser';
 
 import { chat, useAi } from './client';
-import { matchName, readAiDraft, readAiPicks, readAiSms, readJson, type AiDraft, type AiSmsItem, type Kind } from './parse';
+import { matchName, readAiDraft, readAiPicks, readAiSms, readAiSuggestion, type AiDraft, type AiSmsItem, type Kind } from './parse';
 
 type Cat = { name: string; kind: Kind };
 
@@ -46,21 +46,30 @@ export async function aiReadSms(bodies: string[], cats: Cat[]): Promise<AiSmsIte
   return ok;
 }
 
-/** Best category name for a transaction, or null if nothing fits. */
-export async function aiSuggestCategory(text: string, kind: Kind, names: string[]): Promise<string | null> {
+/**
+ * Best category for a transaction, plus up to 3 of the user's tags that fit it. Tags come only from
+ * `tags` (the user's own and the starter ones), so the AI can't invent labels. SMS text is redacted first.
+ */
+export async function aiSuggestCategoryAndTags(text: string, kind: Kind, names: string[], tags: string[]) {
   const reply = await chat(
     [
       {
         role: 'system',
         content:
-          `Pick the single best ${kind} category for an Indian personal-finance transaction from this list: ${names.join(', ')}. ` +
-          'Reply only with JSON: {"category": exact name from the list, or null if none fits}',
+          `Classify an Indian personal-finance ${kind}. Pick the single best category from: ${names.join(', ')}. ` +
+          `Then pick tags from this list only: ${tags.join(', ') || '(none)'}. Tags mark a purpose or an event that cuts across ` +
+          'categories (a trip, office expenses to claim back, tax saving, shared bills); pick one only when the text clearly ' +
+          'supports it, and never just because it was used recently. If none of them fits, propose one new_tag when the merchant ' +
+          'suggests a purpose worth tracking across categories (e.g. "Work tools" for software or AI subscriptions like Claude, ' +
+          'GitHub or Figma; "Goa trip" for a travel booking; "Home setup" for furniture): 1-3 words, Title Case, not a category ' +
+          'name. Use null only when nothing sensible fits. ' +
+          'Reply only with JSON: {"category": exact name from the category list or null, "tags": [exact names from the tag list], "new_tag": string or null}',
       },
-      { role: 'user', content: text },
+      { role: 'user', content: redactSms(text) },
     ],
     { json: true }
   );
-  return matchName(readJson(reply)?.category, names);
+  return readAiSuggestion(reply, names, tags);
 }
 
 const rupees = (n: number) => Math.round(n);

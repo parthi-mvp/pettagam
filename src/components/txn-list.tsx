@@ -5,6 +5,7 @@ import { View } from 'react-native';
 import type { TxnRow } from '@/db/repo';
 import { useTheme } from '@/hooks/use-theme';
 import { dayLabel, moneyExact, tidyName } from '@/lib/format';
+import { parseTags } from '@/lib/tags';
 
 import { categoryIcon } from './icons';
 import { Card, Divider, Row, Text } from './ui';
@@ -56,7 +57,8 @@ function TxnRowItem({ r }: { r: TxnRow }) {
     ? `${r.account_name} → ${r.to_account_name ?? '?'}`
     : tidyName(r.merchant ?? r.category_name ?? (r.type === 'income' ? 'Income' : 'Expense'));
   // Category first (what it was), then where it was paid from; the day heading carries the date.
-  const subtitle = transfer ? 'Transfer' : [r.category_name ?? 'Uncategorised', r.account_name].filter(Boolean).join(' · ');
+  const tags = parseTags(r.tags).map((t) => `#${t}`);
+  const subtitle = [transfer ? 'Transfer' : (r.category_name ?? 'Uncategorised'), transfer ? null : r.account_name, ...tags].filter(Boolean).join(' · ');
   return (
     <Row
       icon={categoryIcon(r.category_name, r.type, r.category_icon)}

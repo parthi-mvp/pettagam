@@ -1,8 +1,9 @@
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { Toaster } from 'sonner-native';
 import { useUniwind } from 'uniwind';
 
-import { FontFamily } from '@/constants/theme';
+import { useThemePreference } from '@/theme/themePreference';
+import { familiesFor } from '@/theme/typography';
 import { useThemeColors } from '@/theme/useThemeColor';
 
 import { Icon, type IconName } from '../icons';
@@ -20,6 +21,8 @@ import { Icon, type IconName } from '../icons';
  */
 export function AppToaster() {
   const { theme } = useUniwind();
+  // The interface font picked in Appearance (toasts style text in code, not with classes).
+  const fam = familiesFor(useThemePreference((s) => s.font), Platform.OS);
   const [surface, fg, muted, line, primary, success, danger, warning, white] = useThemeColors([
     'raised',
     'fg',
@@ -72,10 +75,10 @@ export function AppToaster() {
         info: edge(primary),
         warning: edge(warning),
         // sonner defaults to fontWeight 600, which stacks on the named face on iOS — let the family set the weight.
-        titleStyle: { color: fg, fontFamily: FontFamily[500], fontWeight: 'normal', fontSize: 14, lineHeight: 20 },
-        descriptionStyle: { color: muted, fontFamily: FontFamily[400], fontWeight: 'normal', fontSize: 13, lineHeight: 18 },
+        titleStyle: { color: fg, fontFamily: fam[500], fontWeight: 'normal', fontSize: 14, lineHeight: 20 },
+        descriptionStyle: { color: muted, fontFamily: fam[400], fontWeight: 'normal', fontSize: 13, lineHeight: 18 },
         actionButtonStyle: { backgroundColor: `${primary}1f`, borderRadius: 10, paddingHorizontal: 12, height: 30 },
-        actionButtonTextStyle: { color: primary, fontFamily: FontFamily[600], fontWeight: 'normal', fontSize: 13 },
+        actionButtonTextStyle: { color: primary, fontFamily: fam[600], fontWeight: 'normal', fontSize: 13 },
       }}
     />
   );

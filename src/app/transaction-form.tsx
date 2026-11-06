@@ -9,21 +9,21 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { toast } from 'sonner-native';
 
 import { aiReady, useAi } from '@/ai/client';
-import { aiDraftFromImage, aiDraftTransaction, aiSuggestCategory } from '@/ai/features';
+import { aiDraftFromImage, aiDraftTransaction, aiSuggestCategoryAndTags } from '@/ai/features';
 import type { AiDraft } from '@/ai/parse';
-import { categoryIcon, Icon } from '@/components/icons';
-import { AccountPicker } from '@/components/pickers';
+import { Icon } from '@/components/icons';
+import { AccountPicker, CategoryGrid, CategoryTile, useUsage } from '@/components/pickers';
 import { AmountInput, BackButton, OptionRow, Button, Card, DateField, Field, GroupLabel, HeroBackdrop, IconTile, PressableScale, Sheet, StickyFooter, Text, type SheetRef } from '@/components/ui';
 import { useLiveQuery } from '@/db/events';
-import { getById, listAccounts, listCategories, save, softDelete } from '@/db/repo';
+import { getById, listAccounts, listCategories, save, softDelete, tagTotals } from '@/db/repo';
 import type { CategoryKind, Transaction, TxnType } from '@/db/types';
 import { cn } from '@/lib/cn';
 import { money, parseDate, toInputDate, monthRange } from '@/lib/format';
 import { budgetAlert } from '@/budget/alert';
 import { budgetOverview } from '@/budget/queries';
-import type { BudgetStatus } from '@/budget/status';
-import { BudgetBar } from '@/components/budget-bar';
 import { haptic } from '@/lib/haptics';
+import { parseTags, STARTER_TAGS, tagsColumn } from '@/lib/tags';
+import { TagField } from '@/components/tag-field';
 import { pauseAppLock, resumeAppLock } from '@/security/app-lock';
 import { useThemeColors } from '@/theme/useThemeColor';
 
@@ -34,14 +34,6 @@ const TYPES: { value: TxnType; label: string }[] = [
 ];
 /** Tiles shown before "More": the user's most-used categories. */
 const GRID = 8;
-/** "Food & Dining" → "Food", "Refund / Cashback" → "Refund": tile labels stay one short word. */
-const short = (name: string) => name.split(/ & | \/ /)[0];
-
-/** Category ids by how often they're used: the grid shows the user's habits first. */
-const categoryUse = (db: Parameters<typeof listCategories>[0]) =>
-  db.getAllAsync<{ category_id: string; n: number }>(
-    'SELECT category_id, COUNT(*) AS n FROM transactions WHERE deleted = 0 AND category_id IS NOT NULL GROUP BY category_id'
-  );
 
 export default function TransactionForm() {
   const db = useSQLiteContext();
@@ -49,7 +41,7 @@ export default function TransactionForm() {
   const params = useLocalSearchParams<{ id?: string; type?: TxnType; accountId?: string; describe?: string }>();
   const { data: accounts } = useLiveQuery(listAccounts, ['accounts']);
   const { data: categories } = useLiveQuery(listCategories, ['categories']);
-  const { data: use } = useLiveQuery(categoryUse, ['transactions']);
+  const counts = useUsage('category_id');
   // Budget progress per category for this month: a thin line on each category tile.
   const { data: budgets } = useLiveQuery((d) => budgetOverview(d, monthRange(0).start, monthRange(0).end), ['budgets', 'transactions', 'categories']);
   const budgetOf = (id: string) => budgets?.categories.find((c) => c.budget.category_id === id)?.status;
@@ -63,6 +55,9 @@ export default function TransactionForm() {
   const [date, setDate] = useState(() => toInputDate(Date.now()));
   const [merchant, setMerchant] = useState('');
   const [note, setNote] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
+  const [aiTags, setAiTags] = useState<string[]>([]);
+  const { data: usedTags } = useLiveQuery(tagTotals, ['transactions']);
   const [existing, setExisting] = useState<Transaction | null>(null);
   const [suggesting, setSuggesting] = useState(false);
   const [describe, setDescribe] = useState('');
@@ -84,6 +79,7 @@ export default function TransactionForm() {
       setDate(toInputDate(t.date));
       setMerchant(t.merchant ?? '');
       setNote(t.note ?? '');
+      setTags(parseTags(t.tags));
     });
   }, [db, params.id]);
 
@@ -112,6 +108,7 @@ export default function TransactionForm() {
       date: ts,
       merchant: merchant.trim() || null,
       note: note.trim() || null,
+      tags: tagsColumn(tags),
       source: existing?.source ?? 'manual',
       sms_hash: existing?.sms_hash ?? null,
     });
@@ -204,12 +201,15 @@ export default function TransactionForm() {
     const mine = (categories ?? []).filter((c) => c.kind === kind);
     setSuggesting(true);
     try {
-      const name = await aiSuggestCategory(`${merchant} ${note}`.trim(), kind, mine.map((c) => c.name));
-      const id = mine.find((c) => c.name === name)?.id;
-      if (id) {
+      const tagNames = [...new Set([...(usedTags ?? []).map((t) => t.tag), ...STARTER_TAGS])];
+      const r = await aiSuggestCategoryAndTags(`${merchant} ${note}`.trim(), kind, mine.map((c) => c.name), tagNames);
+      const id = mine.find((c) => c.name === r.category)?.id;
+      if (id) setCategoryId(id);
+      // Tags are offered in the Suggested row (one tap), never added on their own.
+      setAiTags(r.tags);
+      if (id || r.tags.length) {
         haptic.selection();
-        setCategoryId(id);
-        toast.info(`Category: ${name}`);
+        toast.info([id ? `Category: ${r.category}` : null, r.tags.length ? `Suggested tags: ${r.tags.join(', ')}` : null].filter(Boolean).join(' · '));
       } else toast.info('No clear match. Pick one yourself.');
     } catch (e) {
       haptic.error();
@@ -220,14 +220,14 @@ export default function TransactionForm() {
   };
 
   // Most-used first; the selected one always shows even when it's past the first row.
-  const counts = new Map((use ?? []).map((u) => [u.category_id, u.n]));
   const kindCats = (categories ?? [])
     .filter((c) => c.kind === (type === 'income' ? 'income' : 'expense'))
-    .sort((a, b) => (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0) || a.name.localeCompare(b.name));
+    .sort((a, b) => (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0) || a.name.localeCompare(b.name))
+    .map((c) => ({ value: c.id, label: c.name, color: c.color, icon: c.icon }));
   // Room for a "More" tile when there are more categories than fit.
   const shown = kindCats.length > GRID ? GRID - 1 : GRID;
   let gridCats = kindCats.slice(0, shown);
-  const picked = kindCats.find((c) => c.id === categoryId);
+  const picked = kindCats.find((c) => c.value === categoryId);
   if (picked && !gridCats.includes(picked)) gridCats = [...gridCats.slice(0, shown - 1), picked];
   const pickCategory = (id: string, fromSheet = false) => {
     haptic.selection();
@@ -313,23 +313,23 @@ export default function TransactionForm() {
                   <Pressable onPress={suggestCategory} disabled={suggesting} hitSlop={10} className="flex-row items-center gap-1 active:opacity-60">
                     <Icon name="bulb" size={14} color={primary} />
                     <Text variant="small" weight="medium" tone="primary">
-                      {suggesting ? 'Thinking…' : 'Suggest with AI'}
+                      {suggesting ? 'Thinking…' : 'Suggest category & tags'}
                     </Text>
                   </Pressable>
                 ) : null}
               </View>
               <View className="flex-row flex-wrap gap-2">
                 {gridCats.map((c) => (
-                  <CatTile key={c.id} cat={c} active={c.id === categoryId} budget={budgetOf(c.id)} onPress={() => pickCategory(c.id)} />
+                  <CategoryTile key={c.value} option={c} active={c.value === categoryId} budget={budgetOf(c.value)} onPress={() => pickCategory(c.value)} />
                 ))}
                 {kindCats.length > GRID ? (
                   <PressableScale
                     scaleTo={0.95}
                     accessibilityRole="button"
-                    accessibilityLabel={`More categories, ${kindCats.length - gridCats.length} more`}
+                    accessibilityLabel={`Search all categories, ${kindCats.length - gridCats.length} more`}
                     onPress={() => catSheet.current?.present()}
-                    className="w-[23%] grow items-center gap-1.5 rounded-[14px] border-[1.5px] border-transparent bg-surface py-3">
-                    <IconTile icon="more" size={34} />
+                    className="w-[23%] items-center gap-1 rounded-[12px] border-[1.5px] border-transparent bg-surface px-1 py-2">
+                    <IconTile icon="search" size={30} />
                     <Text variant="caption" tone="default" numberOfLines={1}>
                       More
                     </Text>
@@ -368,6 +368,31 @@ export default function TransactionForm() {
               />
             ) : null}
             <Field label="Note" value={note} onChangeText={setNote} multiline placeholder="Lunch with team" />
+            <TagField
+              value={tags}
+              onChange={setTags}
+              aiHints={aiTags}
+              aiSuggest={
+                ai
+                  ? async (tagNames) => {
+                      const kind = type === 'income' ? 'income' : 'expense';
+                      const mine = (categories ?? []).filter((c) => c.kind === kind);
+                      const r = await aiSuggestCategoryAndTags(`${merchant} ${note}`.trim(), kind, mine.map((c) => c.name), tagNames);
+                      // Fill the category only when none is picked; a chosen one stays.
+                      const id = mine.find((c) => c.name === r.category)?.id;
+                      if (id && !categoryId && type !== 'transfer') setCategoryId(id);
+                      return r.tags;
+                    }
+                  : undefined
+              }
+              context={{
+                categoryId: type === 'transfer' ? null : categoryId,
+                merchant,
+                date: parseDate(date) ?? existing?.date ?? 0,
+                text: [merchant, note, picked?.label].filter(Boolean).join(' '),
+                excludeId: existing?.id,
+              }}
+            />
           </View>
 
           {ai && !params.id ? (
@@ -406,11 +431,7 @@ export default function TransactionForm() {
       {Platform.OS === 'ios' ? null : <View pointerEvents="none" className="absolute inset-x-0 top-0 bg-hero" style={{ height: insets.top }} />}
 
       <Sheet ref={catSheet} title={type === 'income' ? 'Income category' : 'Expense category'} scrollable lazy>
-        <View className="flex-row flex-wrap gap-2">
-          {kindCats.map((c) => (
-            <CatTile key={c.id} cat={c} active={c.id === categoryId} budget={budgetOf(c.id)} onPress={() => pickCategory(c.id, true)} />
-          ))}
-        </View>
+        <CategoryGrid options={kindCats} value={categoryId} onPick={(id) => pickCategory(id, true)} budgetOf={budgetOf} />
         <Pressable
           onPress={() => {
             catSheet.current?.dismiss();
@@ -433,26 +454,3 @@ export default function TransactionForm() {
     </View>
   );
 }
-
-type Cat = { id: string; name: string; color: string; icon: string | null };
-
-/** A category tile: its icon in its colour; selected = tinted fill and a border in that colour. */
-function CatTile({ cat, active, budget, onPress }: { cat: Cat; active: boolean; budget?: BudgetStatus; onPress: () => void }) {
-  return (
-    <PressableScale
-      scaleTo={0.95}
-      accessibilityRole="radio"
-      accessibilityState={{ checked: active }}
-      accessibilityLabel={budget ? `${cat.name}, ${budget.state === 'over' ? 'over budget' : `${Math.round(budget.used * 100)}% of budget used`}` : cat.name}
-      onPress={onPress}
-      className={cn('w-[23%] grow items-center gap-1.5 rounded-[14px] border-[1.5px] py-3', !active && 'border-transparent bg-surface')}
-      style={active ? { borderColor: cat.color, backgroundColor: `${cat.color}1f` } : undefined}>
-      <IconTile icon={categoryIcon(cat.name, undefined, cat.icon)} color={cat.color} size={34} />
-      <Text variant="caption" weight={active ? 'medium' : 'regular'} tone="default" numberOfLines={1}>
-        {short(cat.name)}
-      </Text>
-      {budget ? <BudgetBar used={budget.used} state={budget.state} thin className="w-3/5" /> : null}
-    </PressableScale>
-  );
-}
-

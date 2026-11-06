@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { matchName, readAiDraft, readAiPicks, readAiSms } from '../src/ai/parse.ts';
+import { matchName, readAiDraft, readAiPicks, readAiSms, readAiSuggestion } from '../src/ai/parse.ts';
 import { looksLikeTxn, redactSms } from '../src/sms/parser.ts';
 
 const cats = [
@@ -71,4 +71,18 @@ test('readAiDraft maps names and validates fields', () => {
 test('readAiPicks keeps in-range non-empty values once', () => {
   const picks = readAiPicks(JSON.stringify({ items: [{ i: 0, value: ' Swiggy ' }, { i: 0, value: 'X' }, { i: 5, value: 'Y' }, { i: 1, value: '' }] }), 2);
   assert.deepEqual([...picks], [[0, 'Swiggy']]);
+});
+
+test('readAiSuggestion keeps only names from the lists', () => {
+  const r = readAiSuggestion(
+    JSON.stringify({ category: 'subscriptions', tags: ['business', 'Made Up', 'Business', 'Tax saving', 'Shared', 'Reimbursable'] }),
+    ['Subscriptions', 'Food & Dining'],
+    ['Business', 'Tax saving', 'Shared', 'Reimbursable']
+  );
+  assert.deepEqual(r, { category: 'Subscriptions', tags: ['Business', 'Tax saving', 'Shared'] });
+  assert.deepEqual(readAiSuggestion('{"category": null}', ['A'], ['B']), { category: null, tags: [] });
+  // One new tag is allowed; a category name or an over-long label is not.
+  assert.deepEqual(readAiSuggestion('{"category": "A", "tags": [], "new_tag": " #Work tools "}', ['A'], ['B']).tags, ['Work tools']);
+  assert.deepEqual(readAiSuggestion('{"tags": [], "new_tag": "a"}', ['A'], ['B']).tags, []);
+  assert.deepEqual(readAiSuggestion('{"tags": ["B"], "new_tag": "b"}', ['A'], ['B']).tags, ['B']);
 });

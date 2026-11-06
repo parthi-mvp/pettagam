@@ -3,16 +3,6 @@ const inr2 = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR'
 
 export const money = (n: number, decimals = false) => (decimals ? inr2 : inr).format(n || 0);
 
-/** Compact Indian notation: ₹1.2L, ₹3.4Cr */
-export function moneyShort(n: number) {
-  const a = Math.abs(n);
-  const s = n < 0 ? '-' : '';
-  if (a >= 1e7) return `${s}₹${(a / 1e7).toFixed(2)}Cr`;
-  if (a >= 1e5) return `${s}₹${(a / 1e5).toFixed(2)}L`;
-  if (a >= 1e3) return `${s}₹${(a / 1e3).toFixed(1)}K`;
-  return `${s}₹${a.toFixed(0)}`;
-}
-
 export const pct = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`;
 
 export const dateLabel = (ms: number) =>
@@ -29,13 +19,15 @@ export function monthRange(offset = 0, base = new Date()) {
 /** Parse "dd/mm/yyyy", "dd-mm-yyyy" or "yyyy-mm-dd" to epoch ms; null if invalid. */
 export function parseDate(s: string): number | null {
   const t = s.trim();
+  // Date() rolls 31/02 over to 3 March; reject days and months that don't exist instead.
+  const ymd = (y: number, mo: number, d: number) => {
+    const date = new Date(y, mo - 1, d);
+    return date.getFullYear() === y && date.getMonth() === mo - 1 && date.getDate() === d ? date.getTime() : null;
+  };
   let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (m) return new Date(+m[1], +m[2] - 1, +m[3]).getTime();
+  if (m) return ymd(+m[1], +m[2], +m[3]);
   m = t.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
-  if (m) {
-    const y = m[3].length === 2 ? 2000 + +m[3] : +m[3];
-    return new Date(y, +m[2] - 1, +m[1]).getTime();
-  }
+  if (m) return ymd(m[3].length === 2 ? 2000 + +m[3] : +m[3], +m[2], +m[1]);
   return null;
 }
 
@@ -66,4 +58,11 @@ export function dayLabel(ms: number, now = Date.now()): string {
   if (diff === 1) return 'Yesterday';
   const sameYear = new Date(ms).getFullYear() === new Date(now).getFullYear();
   return new Date(ms).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }) });
+}
+
+/** "4 Oct 2026", or "4 Oct – 9 Nov 2026" for a span (the earlier year shown only when it differs). */
+export function dateSpan(from: number, to: number): string {
+  const fmt = (ms: number, year: boolean) => new Date(ms).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', ...(year ? { year: 'numeric' } : {}) });
+  if (new Date(from).toDateString() === new Date(to).toDateString()) return fmt(to, true);
+  return `${fmt(from, new Date(from).getFullYear() !== new Date(to).getFullYear())} – ${fmt(to, true)}`;
 }

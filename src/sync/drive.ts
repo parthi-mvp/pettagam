@@ -5,7 +5,6 @@ import { GoogleSignin, isSuccessResponse } from '@react-native-google-signin/goo
 export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const FILE_NAME = 'expense-manager-sync.json';
 const API = 'https://www.googleapis.com/drive/v3';
-const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
 
 let configured = false;
 function configure() {
@@ -27,18 +26,6 @@ export async function signIn(): Promise<string | null> {
     await GoogleSignin.addScopes({ scopes: [DRIVE_SCOPE] });
   }
   return res.data.user.email;
-}
-
-export async function currentUserEmail(): Promise<string | null> {
-  configure();
-  if (!GoogleSignin.hasPreviousSignIn()) return null;
-  const res = await GoogleSignin.signInSilently();
-  return res.type === 'success' ? res.data.user.email : null;
-}
-
-export async function signOut() {
-  configure();
-  await GoogleSignin.signOut();
 }
 
 async function token(): Promise<string> {
@@ -63,31 +50,9 @@ async function findFileId(): Promise<string | null> {
   return json.files[0]?.id ?? null;
 }
 
-export async function downloadSnapshot<T>(): Promise<{ fileId: string | null; data: T | null }> {
+export async function downloadSnapshot<T>(): Promise<{ data: T | null }> {
   const fileId = await findFileId();
-  if (!fileId) return { fileId: null, data: null };
+  if (!fileId) return { data: null };
   const res = await driveFetch(`${API}/files/${fileId}?alt=media`);
-  return { fileId, data: (await res.json()) as T };
-}
-
-export async function uploadSnapshot(fileId: string | null, data: unknown) {
-  const body = JSON.stringify(data);
-  if (fileId) {
-    await driveFetch(`${UPLOAD}/files/${fileId}?uploadType=media`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    });
-    return;
-  }
-  const boundary = 'pem' + Date.now();
-  const meta = JSON.stringify({ name: FILE_NAME, parents: ['appDataFolder'], mimeType: 'application/json' });
-  const multipart =
-    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n` +
-    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${boundary}--`;
-  await driveFetch(`${UPLOAD}/files?uploadType=multipart`, {
-    method: 'POST',
-    headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
-    body: multipart,
-  });
+  return { data: (await res.json()) as T };
 }

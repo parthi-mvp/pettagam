@@ -65,6 +65,11 @@ export default function AccountForm() {
     if (!name.trim()) return Alert.alert('Enter a name', 'e.g. "HDFC Savings" or "ICICI Amazon Pay card"');
     if (last4 && !/^\d{3,4}$/.test(last4)) return Alert.alert('Last digits should be 3–4 numbers');
     if (hasDebitCard && cardLast4 && !/^\d{4}$/.test(cardLast4)) return Alert.alert('Debit card digits should be 4 numbers');
+    // The server rejects these (numeric(14,2), day 1–31); a rejected row would stall every upload.
+    const money = [num(opening), isCardLike(type) ? num(limit) : null];
+    if (money.some((n) => n != null && !(Math.abs(n) < 1e12))) return Alert.alert('Enter amounts as plain numbers', 'e.g. 25000 or -1500.50');
+    const day = isCardLike(type) ? num(billingDay) : null;
+    if (day != null && !(Number.isInteger(day) && day >= 1 && day <= 31)) return Alert.alert('Statement day should be 1–31');
     await save(db, 'accounts', {
       id,
       type,
@@ -74,7 +79,7 @@ export default function AccountForm() {
       card_last4: hasDebitCard ? cardLast4 || null : null,
       opening_balance: num(opening) ?? 0,
       credit_limit: isCardLike(type) ? num(limit) : null,
-      billing_day: isCardLike(type) ? num(billingDay) : null,
+      billing_day: day,
       notes: notes.trim() || null,
     });
     router.back();

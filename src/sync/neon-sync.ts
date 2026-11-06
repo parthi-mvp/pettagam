@@ -6,8 +6,8 @@ import { enqueue, getSetting, setSetting, upsertRaw } from '@/db/repo';
 import { seedCategories } from '@/db/schema';
 import { SYNCED_TABLES, type TableName } from '@/db/types';
 
-import { rowsSince, upsertRows } from './data-api';
-import { fromServer, shouldApplyRemote, toServer } from './wire';
+import { isRowRejection, rowsSince, upsertRows } from './data-api';
+import { fromServer, shouldApplyRemote, toServer, uploadRows } from './wire';
 
 /**
  * Option B: Neon is the source of truth; SQLite on the phone is an offline cache.
@@ -20,9 +20,11 @@ import { fromServer, shouldApplyRemote, toServer } from './wire';
 
 const PUSH_BATCH = 200;
 const PULL_PAGE = 500;
-// Re-read a few recent revs each time: two devices committing at the same moment can make
-// sequence numbers become visible out of order. Re-applying a row is harmless.
-const PULL_OVERLAP = 100;
+// Re-read rows the server wrote in the last 2 minutes before the newest one seen: a slow upload can
+// commit a lower rev after a higher one was pulled. Counted in server time, not in revs, because the
+// rev sequence is shared by every user. Re-applying a row is harmless.
+// shortcut: assumes no upload transaction runs longer than 2 minutes, raise it if one ever does.
+const PULL_OVERLAP_MS = 2 * 60_000;
 
 export type SyncStatus = {
   state: 'idle' | 'syncing' | 'error' | 'offline';
@@ -57,12 +59,16 @@ export async function refreshPending(db: SQLiteDatabase) {
 }
 
 async function push(db: SQLiteDatabase) {
+  // Page by seq, not "the oldest 200": rows the server rejects stay queued without blocking the rest.
+  let after = 0;
+  let rejected: string | null = null;
   for (;;) {
     const items = await db.getAllAsync<{ seq: number; table_name: TableName; row_id: string }>(
-      'SELECT seq, table_name, row_id FROM outbox ORDER BY seq LIMIT ?',
-      [PUSH_BATCH]
+      'SELECT seq, table_name, row_id FROM outbox WHERE seq > ? ORDER BY seq LIMIT ?',
+      [after, PUSH_BATCH]
     );
-    if (items.length === 0) return;
+    if (items.length === 0) break;
+    after = items[items.length - 1].seq;
     for (const table of SYNCED_TABLES) {
       const batch = items.filter((i) => i.table_name === table);
       if (batch.length === 0) continue;
@@ -71,22 +77,34 @@ async function push(db: SQLiteDatabase) {
         `SELECT * FROM ${table} WHERE id IN (${placeholders})`,
         batch.map((b) => b.row_id)
       );
-      await upsertRows(table, rows.map(toServer));
+      const failed = await uploadRows(rows.map(toServer), (r) => upsertRows(table, r), isRowRejection);
+      for (const [id, reason] of failed) {
+        rejected ??= `${table} ${id}: ${reason}`;
+        console.warn('sync: server rejected', table, id, reason);
+      }
       // Delete by seq: if the row was edited again during the upload it got a new seq and stays queued.
-      await db.runAsync(`DELETE FROM outbox WHERE seq IN (${batch.map(() => '?').join(',')})`, batch.map((b) => b.seq));
+      const done = batch.filter((b) => !failed.has(b.row_id)).map((b) => b.seq);
+      if (done.length) await db.runAsync(`DELETE FROM outbox WHERE seq IN (${done.map(() => '?').join(',')})`, done);
     }
     setStatus({ pending: await pendingCount(db) });
   }
+  // Rejected rows stay queued (editing the row re-queues a fixed copy); say so instead of "Up to date".
+  if (rejected) throw new Error(`Some changes were refused by the server and are still waiting: ${rejected}`);
 }
 
 async function pull(db: SQLiteDatabase): Promise<number> {
   let applied = 0;
   for (const table of SYNCED_TABLES) {
     const cursorKey = `rev_${table}`;
-    let cursor = Number((await getSetting(db, cursorKey)) ?? 0);
-    let since = cursor - PULL_OVERLAP;
+    // Under 'rev_' so wipeLocalData clears it with the cursors: newest server_updated_at pulled (epoch ms).
+    const seenKey = `rev_seen_${table}`;
+    const from = Number((await getSetting(db, cursorKey)) ?? 0);
+    let cursor = from;
+    let seen = Number((await getSetting(db, seenKey)) ?? 0);
+    const recentSince = seen > 0 ? new Date(seen - PULL_OVERLAP_MS).toISOString() : null;
+    let after = 0;
     for (;;) {
-      const page = await rowsSince(table, since, PULL_PAGE).catch((e: unknown) => {
+      const page = await rowsSince(table, from, recentSince, after, PULL_PAGE).catch((e: unknown) => {
         // A table this app version knows but the server doesn't have yet (its migration not applied):
         // skip it rather than failing the whole sync. Anything else is a real error.
         if (/PGRST205|Could not find the table/i.test(String(e instanceof Error ? e.message : e))) return null;
@@ -106,10 +124,12 @@ async function pull(db: SQLiteDatabase): Promise<number> {
       });
       const maxRev = Math.max(...page.map((r) => Number(r.rev)));
       cursor = Math.max(cursor, maxRev);
-      since = maxRev;
+      seen = Math.max(seen, ...page.map((r) => Date.parse(String(r.server_updated_at)) || 0));
+      after = maxRev;
       if (page.length < PULL_PAGE) break;
     }
     await setSetting(db, cursorKey, String(cursor));
+    await setSetting(db, seenKey, String(seen));
   }
   return applied;
 }
