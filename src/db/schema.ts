@@ -66,7 +66,7 @@ const MIGRATIONS: string[] = [
   -- Local-only key/value settings (not synced): last sync time, SMS scan cursor, etc.
   CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT);
   `,
-  // v2 — rows edited on this phone since the last backup (the "outbox"; src/sync/drive-sync.ts).
+  // v2 — the old upload queue ("outbox"). No longer used: field_clock (v10) says what changed.
   // One entry per row; re-editing a queued row just bumps its seq.
   `
   CREATE TABLE outbox (
@@ -104,6 +104,8 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (tbl, row_id, col)
   ) WITHOUT ROWID;
   `,
+  // v11 — sync uploads "this phone's clocks newer than the last upload": an index keeps that quick.
+  `CREATE INDEX idx_field_clock_hlc ON field_clock(hlc);`,
 ];
 
 // Fixed ids so seeded categories are identical on every device and merge cleanly on sync.

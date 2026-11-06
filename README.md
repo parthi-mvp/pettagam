@@ -99,7 +99,7 @@ Backup is optional; the app works fully without it. To enable it in your builds:
 
 How it works:
 
-- **Saving.** Every edit is saved on the phone and marked in the outbox. About 20 seconds later, and when the app opens or goes to the background, the phone uploads a full snapshot to its own file in the Drive app folder.
+- **Saving.** Every edit is saved on the phone and marked in the outbox. A few seconds later, and when the app opens or goes to the background, the phone uploads a small change file with just the fields it changed; every 50 change files it also writes a full snapshot and removes its older change files.
 - **Other phones.** Each sync lists the backup files; any other phone's file that changed is downloaded and merged in, keeping the newer copy of each entry.
 - **Deletes.** Deletes are soft, so they reach every phone.
 - **New phone.** Install, tap *Restore from Google Drive* on the welcome screen (or More → Backup) and connect the same account.

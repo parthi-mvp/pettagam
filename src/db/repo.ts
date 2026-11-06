@@ -60,10 +60,8 @@ export async function save<T extends TableName>(
   // after it (a new seq, so an upload that read the old row can't clear the queue entry).
   const cols = changedColumns(existing, row);
   if (existing && cols.length === 0) return id; // nothing changed: no clock, nothing to back up
-  await enqueue(db, table, id);
   await upsertRaw(db, table, row);
   await stampFields(db, table, id, cols, await nextClock(db));
-  await enqueue(db, table, id);
   if (!opts.silent) emitChange(table);
   return id;
 }
@@ -86,11 +84,6 @@ export async function newCategoryId(db: SQLiteDatabase, kind: Category['kind'], 
   return (await db.getFirstAsync('SELECT 1 FROM categories WHERE id = ?', [id])) ? undefined : id;
 }
 
-/** Mark a row as changed since the last Drive backup. Called for every local edit (not for rows merged in from Drive). */
-export async function enqueue(db: SQLiteDatabase, table: TableName, id: string) {
-  await db.runAsync('INSERT OR REPLACE INTO outbox (table_name, row_id) VALUES (?, ?)', [table, id]);
-}
-
 /** Write a row exactly as given, without clocks (sync merge stamps the remote clocks itself). */
 export async function upsertRaw(db: SQLiteDatabase, table: TableName, row: Record<string, unknown>) {
   const cols = Object.keys(row);
@@ -104,10 +97,8 @@ export async function upsertRaw(db: SQLiteDatabase, table: TableName, row: Recor
 
 export async function softDelete(db: SQLiteDatabase, table: TableName, id: string) {
   const clock = await nextClock(db);
-  await enqueue(db, table, id); // before and after, as in save()
   await db.runAsync(`UPDATE ${table} SET deleted = 1, updated_at = ? WHERE id = ?`, [Date.now(), id]);
   await stampFields(db, table, id, ['deleted'], clock);
-  await enqueue(db, table, id);
   if (table === 'investments') {
     const entries = await db.getAllAsync<{ id: string }>(
       'SELECT id FROM investment_entries WHERE investment_id = ? AND deleted = 0',
@@ -117,10 +108,7 @@ export async function softDelete(db: SQLiteDatabase, table: TableName, id: strin
       Date.now(),
       id,
     ]);
-    for (const e of entries) {
-      await stampFields(db, 'investment_entries', e.id, ['deleted'], clock);
-      await enqueue(db, 'investment_entries', e.id);
-    }
+    for (const e of entries) await stampFields(db, 'investment_entries', e.id, ['deleted'], clock);
   }
   emitChange(table);
 }

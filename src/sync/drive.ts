@@ -1,14 +1,12 @@
 import { GoogleSignin, isSuccessResponse } from '@react-native-google-signin/google-signin';
 
+import { LEGACY_FILE, LOG_PREFIX, SNAPSHOT_PREFIX, type RemoteFile as DriveFile } from './drive-plan';
+
 // drive.appdata = a hidden, app-private folder in the user's own Google Drive.
 // The app can't see the user's other files and nothing goes to any third-party server.
 export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
-/** Each phone writes its own file, pettagam-<device>.json; older versions wrote this one shared file. */
-export const FILE_PREFIX = 'pettagam-';
-export const LEGACY_FILE = 'expense-manager-sync.json';
-
 let configured = false;
 function configure() {
   if (configured) return;
@@ -54,40 +52,58 @@ async function driveFetch(url: string, init: RequestInit = {}) {
   return res;
 }
 
-export type DriveFile = { id: string; name: string; modifiedTime: string };
+export type { RemoteFile as DriveFile } from './drive-plan';
 
-/** Every Pettagam backup in the app folder: one per phone, plus the old shared file if it's there. */
-export async function listBackups(): Promise<DriveFile[]> {
-  const q = encodeURIComponent(`(name contains '${FILE_PREFIX}' or name = '${LEGACY_FILE}') and trashed = false`);
-  const res = await driveFetch(`${API}/files?spaces=appDataFolder&q=${q}&fields=files(id,name,modifiedTime)&pageSize=100`);
-  return ((await res.json()) as { files: DriveFile[] }).files;
+const FIELDS = 'id,name,modifiedTime,appProperties';
+const q = (query: string) => encodeURIComponent(`${query} and trashed = false`);
+
+/** Pettagam's files in the app folder, only those changed after `since` (RFC 3339) when given. */
+export async function listFiles(since?: string): Promise<DriveFile[]> {
+  const out: DriveFile[] = [];
+  let page = '';
+  do {
+    const filter = `(name contains '${SNAPSHOT_PREFIX}' or name contains '${LOG_PREFIX}' or name = '${LEGACY_FILE}')${since ? ` and modifiedTime > '${since}'` : ''}`;
+    const res = await driveFetch(`${API}/files?spaces=appDataFolder&q=${q(filter)}&fields=nextPageToken,files(${FIELDS})&pageSize=1000${page ? `&pageToken=${page}` : ''}`);
+    const json = (await res.json()) as { files: DriveFile[]; nextPageToken?: string };
+    out.push(...json.files);
+    page = json.nextPageToken ?? '';
+  } while (page);
+  return out;
 }
 
-export async function download<T>(id: string): Promise<T> {
-  const res = await driveFetch(`${API}/files/${id}?alt=media`);
-  return (await res.json()) as T;
+export async function findByName(name: string): Promise<DriveFile | null> {
+  const res = await driveFetch(`${API}/files?spaces=appDataFolder&q=${q(`name = '${name}'`)}&fields=files(${FIELDS})`);
+  return ((await res.json()) as { files: DriveFile[] }).files[0] ?? null;
 }
 
-/** Writes JSON to the named file in the app folder: replaces it when `id` is given, creates it otherwise. */
-export async function upload(name: string, body: string, id?: string): Promise<DriveFile> {
-  const fields = 'fields=id,name,modifiedTime';
-  if (id) {
-    const res = await driveFetch(`${UPLOAD}/files/${id}?uploadType=media&${fields}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    });
-    return res.json();
+/** The file's JSON, or null if it's gone (deleted by its phone's clean-up since it was listed). */
+export async function download<T>(id: string): Promise<T | null> {
+  try {
+    const res = await driveFetch(`${API}/files/${id}?alt=media`);
+    return (await res.json()) as T;
+  } catch (e) {
+    if (/Google Drive 404/.test(String(e))) return null;
+    throw e;
   }
+}
+
+/** Writes JSON to the named file in the app folder (replacing file `id` when given), with optional properties. */
+export async function upload(name: string, body: string, id?: string, props?: Record<string, string>): Promise<DriveFile> {
   const boundary = `pettagam${Date.now()}`;
-  const meta = JSON.stringify({ name, parents: ['appDataFolder'], mimeType: 'application/json' });
+  const meta = JSON.stringify(id ? { appProperties: props ?? {} } : { name, parents: ['appDataFolder'], mimeType: 'application/json', appProperties: props ?? {} });
   const multipart =
     `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n` +
     `--${boundary}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${boundary}--`;
-  const res = await driveFetch(`${UPLOAD}/files?uploadType=multipart&${fields}`, {
-    method: 'POST',
+  const res = await driveFetch(`${UPLOAD}/files${id ? `/${id}` : ''}?uploadType=multipart&fields=${FIELDS}`, {
+    method: id ? 'PATCH' : 'POST',
     headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
     body: multipart,
   });
   return res.json();
+}
+
+export async function remove(id: string) {
+  await driveFetch(`${API}/files/${id}`, { method: 'DELETE' }).catch((e) => {
+    if (!/Google Drive 404/.test(String(e))) throw e;
+  });
 }
