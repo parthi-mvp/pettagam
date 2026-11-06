@@ -1,7 +1,7 @@
-import { router, Stack } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useState } from 'react';
-import { Alert, Share, View } from 'react-native';
+import { Alert, View } from 'react-native';
 
 import { aiMonthSummary, aiTaxCheck, financialYear } from '@/ai/features';
 import { AiNote } from '@/components/ai-note';
@@ -27,25 +27,24 @@ import {
   ShareBar,
   Text,
 } from '@/components/ui';
-import { useLiveQuery } from '@/db/events';
+import { emitChange, useLiveQuery } from '@/db/events';
 import { money, monthRange } from '@/lib/format';
 import {
   cardStatements,
   categoryBreakdown,
   categoryTrend,
   dailySpend,
-  exportCsv,
   insights,
   monthlyTrend,
   netWorth,
   paymentMethods,
-  recurringPayments,
   spendPace,
   topMerchants,
 } from '@/reports/analytics';
 import { viaLabel } from '@/sms/parser';
 import { SERIES_COLORS } from '@/theme/series';
 import { useThemeColors } from '@/theme/useThemeColor';
+import { clearRecurringHidden, hiddenRecurring, setRecurringHidden, visibleRecurring } from '@/reminders/sources';
 
 const pct = (part: number, whole: number) => (whole ? `${Math.round((part / whole) * 100)}%` : '0%');
 const CARD = 'rounded-2xl px-3.5 py-3.5';
@@ -96,7 +95,8 @@ export default function Reports() {
   const db = useSQLiteContext();
   const [offset, setOffset] = useState(0);
   const [today] = useState(() => Date.now());
-  const [tab, setTab] = useState<Tab>('overview');
+  const params = useLocalSearchParams<{ tab?: Tab }>();
+  const [tab, setTab] = useState<Tab>(params.tab && TABS.some((t) => t.value === params.tab) ? params.tab : 'overview');
   const [day, setDay] = useState<number | null>(null);
   const changeMonth = (o: number) => {
     setDay(null);
@@ -124,7 +124,19 @@ export default function Reports() {
     [dayStart],
   );
   const { data: cardsDue } = useLiveQuery((d) => cardStatements(d), ['transactions', 'accounts', 'categories']);
-  const { data: recurring } = useLiveQuery((d) => recurringPayments(d), ['transactions', 'categories']);
+  const { data: recurring } = useLiveQuery((d) => visibleRecurring(d), ['transactions', 'categories']);
+  const { data: hidden } = useLiveQuery(hiddenRecurring, ['transactions']);
+  // Hidden merchants live in local settings; nudge the queries that read them.
+  const hide = (merchant: string) => setRecurringHidden(db, merchant, true).then(() => emitChange('transactions'));
+  const reviewRecurring = (r: { merchant: string; amount: number; monthly: number; last: number }) =>
+    Alert.alert(
+      r.merchant,
+      `About ${money(r.monthly * 12)} a year. Last charged ${new Date(r.last).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}. Not using it? Cancel it with ${r.merchant}; Pettagam only tracks it.`,
+      [
+        { text: 'Close', style: 'cancel' },
+        { text: 'Not a subscription', onPress: () => hide(r.merchant) },
+      ]
+    );
   const { data: nw } = useLiveQuery(netWorth, ['accounts', 'transactions', 'investments', 'investment_entries']);
   const { data: tips } = useLiveQuery(insights, ['transactions', 'accounts', 'investments']);
   const [brass, danger, muted] = useThemeColors(['brass', 'danger', 'fg-muted'] as const);
@@ -175,14 +187,7 @@ export default function Reports() {
   const year = new Date(start).getFullYear();
   const recurringMonthly = (recurring ?? []).reduce((s, r) => s + r.monthly, 0);
 
-  const onExport = async () => {
-    try {
-      const csv = await exportCsv(db);
-      await Share.share({ message: csv, title: 'transactions.csv' });
-    } catch {
-      Alert.alert('Export failed', 'Couldn’t prepare the file. Try again.');
-    }
-  };
+  const onExport = () => router.push('/export');
 
   return (
     <Screen>
@@ -530,12 +535,12 @@ export default function Reports() {
 
           {/* Subscriptions, rent, EMIs, bills: found from steady payments, not entered by hand. */}
           {recurring && recurring.length > 0 ? (
-            <Block title="Recurring payments" detail={`${money(recurringMonthly)} a month`}>
+            <Block title="Recurring payments" detail={`${money(recurringMonthly)} a month · ${money(recurringMonthly * 12)} a year`}>
               <Card padded={false} className="rounded-2xl px-3.5 py-1">
                 {recurring.map((r, i) => (
                   <View key={r.merchant}>
                     {i > 0 ? <Divider /> : null}
-                    <View className="flex-row items-center gap-2.5 py-3">
+                    <PressableScale scaleTo={0.98} accessibilityRole="button" onPress={() => reviewRecurring(r)} className="flex-row items-center gap-2.5 py-3">
                       <IconTile icon={categoryIcon(r.category ?? '', undefined, r.icon)} color={r.color ?? '#8E8E93'} size={32} />
                       <View className="min-w-0 flex-1 gap-0.5">
                         <Text tone="default" numberOfLines={1}>
@@ -544,16 +549,29 @@ export default function Reports() {
                         <Text variant="caption" numberOfLines={1}>
                           {`${CADENCE_LABEL[r.cadence]} · ${r.next < today ? 'due now' : `next ${new Date(r.next).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}`}`}
                         </Text>
+                        {r.rise ? (
+                          <Text variant="caption" tone="warning" tabular numberOfLines={1}>
+                            {`Price went up ${money(r.rise)} on the last charge`}
+                          </Text>
+                        ) : null}
                       </View>
                       <View className="items-end gap-0.5">
-                        <Amount size={15}>{money(r.amount)}</Amount>
+                        <Amount size={15}>{money(r.rise ? r.latest : r.amount)}</Amount>
                         {r.cadence !== 'monthly' ? <Text variant="caption" tabular>{`${money(r.monthly)}/mo`}</Text> : null}
                       </View>
-                    </View>
+                    </PressableScale>
                   </View>
                 ))}
               </Card>
             </Block>
+          ) : null}
+          {hidden && hidden.length > 0 ? (
+            <Button
+              size="sm"
+              variant="link"
+              title={`${hidden.length} marked “not a subscription” · show again`}
+              onPress={() => clearRecurringHidden(db).then(() => emitChange('transactions'))}
+            />
           ) : null}
         </>
       ) : null}

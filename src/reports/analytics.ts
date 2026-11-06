@@ -9,6 +9,7 @@ import { money, monthLabel, monthRange } from '@/lib/format';
 import { cardCycles, type Cycle } from '@/lib/card-cycle';
 
 import { findRecurring, type Payment } from './recurring';
+import type { ExportRow } from './statement';
 
 export type CategorySlice = { id: string | null; name: string; color: string; icon: string | null; total: number };
 export type MonthPoint = { label: string; start: number; income: number; expense: number };
@@ -102,7 +103,9 @@ export type NetWorth = {
   bankCount: number; // bank + cash + wallet accounts
   chitDues: number; // installments still owed on chits you've already won
   chits: { id: string; name: string; summary: ReturnType<typeof chitSummary> }[];
-  cards: { id: string; name: string; last4: string | null; due: number; limit: number | null; billingDay: number | null }[];
+  cards: { id: string; name: string; last4: string | null; due: number; limit: number | null; billingDay: number | null; dueDay: number | null }[];
+  /** Loans with an EMI day: the next EMI. */
+  emis: { id: string; name: string; emi: number | null; dueDay: number; outstanding: number }[];
   allocation: { type: InvestmentType; label: string; value: number; invested: number; count: number }[];
 };
 
@@ -113,12 +116,16 @@ export async function netWorth(db: SQLiteDatabase): Promise<NetWorth> {
     creditCardDue = 0,
     loans = 0;
   const cards: NetWorth['cards'] = [];
+  const emis: NetWorth['emis'] = [];
   for (const a of accounts) {
     const b = balances[a.id] ?? 0;
     if (isCardLike(a.type)) {
       creditCardDue += b;
-      cards.push({ id: a.id, name: a.name, last4: a.last4, due: b, limit: a.credit_limit, billingDay: a.billing_day });
-    } else if (a.type === 'loan' || a.type === 'borrowed') loans += b;
+      cards.push({ id: a.id, name: a.name, last4: a.last4, due: b, limit: a.credit_limit, billingDay: a.billing_day, dueDay: a.due_day ?? null });
+    } else if (a.type === 'loan' || a.type === 'borrowed') {
+      loans += b;
+      if (a.type === 'loan' && a.due_day && b > 0.5) emis.push({ id: a.id, name: a.name, emi: a.emi ?? null, dueDay: a.due_day, outstanding: b });
+    }
     else if (!isLiability(a.type)) {
       bank += b;
       bankCount++;
@@ -155,6 +162,7 @@ export async function netWorth(db: SQLiteDatabase): Promise<NetWorth> {
     chitDues,
     chits,
     cards,
+    emis,
     allocation,
   };
 }
@@ -222,21 +230,16 @@ export async function insights(db: SQLiteDatabase): Promise<string[]> {
   return out;
 }
 
-export async function exportCsv(db: SQLiteDatabase): Promise<string> {
-  const rows = await db.getAllAsync<Record<string, string | number | null>>(
+/** Every entry in [from, to), newest first, as plain rows for CSV / PDF export (src/reports/statement.ts). */
+export async function exportRows(db: SQLiteDatabase, from: number, to: number): Promise<ExportRow[]> {
+  const rows = await db.getAllAsync<Omit<ExportRow, 'tags'> & { tags: string | null }>(
     `SELECT date(t.date/1000,'unixepoch','localtime') AS date, t.type, t.amount, a.name AS account,
-            ta.name AS to_account, c.name AS category, t.merchant, t.note, t.source, t.via, t.tags
+            ta.name AS to_account, c.name AS category, t.merchant, t.note, t.via, t.tags
      FROM transactions t LEFT JOIN accounts a ON a.id=t.account_id LEFT JOIN accounts ta ON ta.id=t.to_account_id
-     LEFT JOIN categories c ON c.id=t.category_id WHERE t.deleted=0 ORDER BY t.date DESC`
+     LEFT JOIN categories c ON c.id=t.category_id WHERE t.deleted=0 AND t.date >= ? AND t.date < ? ORDER BY t.date DESC`,
+    [from, to]
   );
-  const cols = ['date', 'type', 'amount', 'account', 'to_account', 'category', 'merchant', 'note', 'source', 'via', 'tags'];
-  const esc = (v: unknown) => {
-    const s = v == null ? '' : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  // Tags as "Goa trip; Reimbursable" rather than raw JSON.
-  const cell = (r: Record<string, string | number | null>, c: string) => (c === 'tags' ? parseTags(r.tags as string | null).join('; ') : r[c]);
-  return [cols.join(','), ...rows.map((r) => cols.map((c) => esc(cell(r, c))).join(','))].join('\n');
+  return rows.map((r) => ({ ...r, tags: parseTags(r.tags).join('; ') }));
 }
 
 /** Subscriptions, rent, EMIs and bills: steady payments to one merchant over the last 13 months. */

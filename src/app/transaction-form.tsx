@@ -65,7 +65,7 @@ const GRID = 8;
 export default function TransactionForm() {
   const db = useSQLiteContext();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ id?: string; type?: TxnType; accountId?: string; describe?: string }>();
+  const params = useLocalSearchParams<{ id?: string; type?: TxnType; accountId?: string; toAccountId?: string; amount?: string; describe?: string }>();
   const { data: accounts } = useLiveQuery(listAccounts, ['accounts']);
   const { data: categories } = useLiveQuery(listCategories, ['categories']);
   const counts = useUsage('category_id');
@@ -76,9 +76,9 @@ export default function TransactionForm() {
 
   const [type, setType] = useState<TxnType>(params.type ?? 'expense');
   const typeIndex = Math.max(0, TYPES.findIndex((o) => o.value === type));
-  const [amount, setAmount] = useState('');
+  const [amount, setAmount] = useState(params.amount ?? '');
   const [chosenAccountId, setAccountId] = useState<string | null>(params.accountId ?? null);
-  const [toAccountId, setToAccountId] = useState<string | null>(null);
+  const [toAccountId, setToAccountId] = useState<string | null>(params.toAccountId ?? null);
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [date, setDate] = useState(() => toInputDate(Date.now()));
   const [merchant, setMerchant] = useState('');

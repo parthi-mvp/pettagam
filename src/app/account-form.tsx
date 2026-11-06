@@ -3,14 +3,17 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useState } from 'react';
 import { Alert, Pressable, View } from 'react-native';
 
+import { LoanPanel } from '@/components/loan-panel';
 import { ACCOUNT_ICON, ACCOUNT_TYPE_OPTIONS, BankPicker, OptionPicker } from '@/components/pickers';
 import { NetworkMark } from '@/components/network-mark';
 import { Button, Field, FormSection, PressableScale, Screen, Text } from '@/components/ui';
-import { getById, save, softDelete } from '@/db/repo';
+import { useLiveQuery } from '@/db/events';
+import { accountBalances, getById, save, softDelete } from '@/db/repo';
 import { isCardLike, isLiability, isPersonal, type AccountType } from '@/db/types';
 import type { BankKind } from '@/catalog/banks';
 import { NETWORKS, networkById, type CardNetwork } from '@/catalog/networks';
 import { cn } from '@/lib/cn';
+import { money } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
 
 const NAME_HINT: Partial<Record<AccountType, string>> = {
@@ -43,6 +46,11 @@ export default function AccountForm() {
   const [billingDay, setBillingDay] = useState('');
   const [notes, setNotes] = useState('');
   const [network, setNetwork] = useState<CardNetwork | null>(null);
+  const [dueDay, setDueDay] = useState('');
+  const [rate, setRate] = useState('');
+  const [emi, setEmi] = useState('');
+  const { data: balances } = useLiveQuery(accountBalances, ['accounts', 'transactions']);
+  const balance = id ? (balances?.[id] ?? null) : null;
 
   useEffect(() => {
     if (!id) return;
@@ -58,6 +66,9 @@ export default function AccountForm() {
       setBillingDay(a.billing_day != null ? String(a.billing_day) : '');
       setNotes(a.notes ?? '');
       setNetwork(networkById(a.network)?.id ?? null);
+      setDueDay(a.due_day != null ? String(a.due_day) : '');
+      setRate(a.interest_rate != null ? String(a.interest_rate) : '');
+      setEmi(a.emi != null ? String(a.emi) : '');
     });
   }, [db, id]);
 
@@ -76,6 +87,13 @@ export default function AccountForm() {
     if (money.some((n) => n != null && !(Math.abs(n) < 1e12))) return Alert.alert('Enter amounts as plain numbers', 'e.g. 25000 or -1500.50');
     const day = isCardLike(type) ? num(billingDay) : null;
     if (day != null && !(Number.isInteger(day) && day >= 1 && day <= 31)) return Alert.alert('Statement day should be 1–31');
+    const loan = type === 'loan';
+    const due = isCardLike(type) || loan ? num(dueDay) : null;
+    if (due != null && !(Number.isInteger(due) && due >= 1 && due <= 31)) return Alert.alert(loan ? 'EMI day should be 1–31' : 'Payment due day should be 1–31');
+    const r = loan ? num(rate) : null;
+    if (r != null && !(r >= 0 && r < 100)) return Alert.alert('Interest rate should be a % a year, e.g. 8.5');
+    const e = loan ? num(emi) : null;
+    if (e != null && !(e > 0 && e < 1e12)) return Alert.alert('Enter the EMI as a plain number');
     await save(db, 'accounts', {
       id,
       type,
@@ -89,6 +107,9 @@ export default function AccountForm() {
       notes: notes.trim() || null,
       // A bank account's network is its debit card's; cash, wallets, loans and people have none.
       network: isCardLike(type) || hasDebitCard ? network : null,
+      due_day: due,
+      interest_rate: r,
+      emi: e,
     });
     router.back();
   };
@@ -148,7 +169,59 @@ export default function AccountForm() {
             </View>
           </View>
         ) : null}
+        {isCardLike(type) ? (
+          <Field
+            label="Payment due day"
+            value={dueDay}
+            onChangeText={setDueDay}
+            keyboardType="number-pad"
+            maxLength={2}
+            placeholder="1–31"
+            hint="The day each month the bill must be paid by. Used for reminders."
+          />
+        ) : null}
+        {type === 'loan' ? (
+          <>
+            <View className="flex-row gap-3">
+              <View className="flex-1">
+                <Field label="EMI" prefix="₹" value={emi} onChangeText={setEmi} keyboardType="decimal-pad" placeholder="24500" />
+              </View>
+              <View className="flex-1">
+                <Field label="Interest % a year" value={rate} onChangeText={setRate} keyboardType="decimal-pad" placeholder="8.5" />
+              </View>
+            </View>
+            <Field label="EMI day" value={dueDay} onChangeText={setDueDay} keyboardType="number-pad" maxLength={2} placeholder="1–31" hint="The day the EMI is paid each month." />
+          </>
+        ) : null}
       </FormSection>
+
+      {type === 'loan' && balance != null && balance > 0 && num(emi) ? (
+        <FormSection title="Payoff">
+          <LoanPanel outstanding={balance} rate={num(rate) ?? 0} emi={num(emi)!} />
+        </FormSection>
+      ) : null}
+
+      {personal && id && balance != null ? (
+        <FormSection title={type === 'lent' ? 'They owe you' : 'You owe'}>
+          <Text tone="default" weight="medium" tabular>
+            {Math.abs(balance) < 0.5 ? 'All settled' : money(balance)}
+          </Text>
+          {balance >= 0.5 ? (
+            <Button
+              variant="secondary"
+              title={type === 'lent' ? 'They paid me back' : 'I paid them back'}
+              onPress={() =>
+                router.push({
+                  pathname: '/transaction-form',
+                  // Paid back = money moves between this person and one of your accounts (you pick which).
+                  params: type === 'lent' ? { type: 'transfer', accountId: id, amount: String(Math.round(balance * 100) / 100) } : { type: 'transfer', toAccountId: id, amount: String(Math.round(balance * 100) / 100) },
+                })
+              }
+            />
+          ) : null}
+          <Text variant="caption">Lent more, or paid part of it? Add a transfer between this person and your account, for any amount.</Text>
+        </FormSection>
+      ) : null}
 
       {isCardLike(type) || hasDebitCard ? (
         <FormSection title={hasDebitCard ? 'Debit card network' : 'Card network'}>

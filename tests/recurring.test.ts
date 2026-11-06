@@ -37,3 +37,10 @@ test('findRecurring: an amount that keeps changing is not a subscription', () =>
   const pay = [10, 40, 70, 100].map((d, i) => ({ merchant: 'Amazon', amount: [200, 1800, 450, 3200][i], date: ago(d) }));
   assert.equal(findRecurring(pay, now).length, 0);
 });
+
+test('findRecurring: a price rise on the latest charge is flagged', () => {
+  const pay = [...[96, 66, 35].map((d) => ({ merchant: 'Netflix', amount: 649, date: ago(d) })), { merchant: 'Netflix', amount: 799, date: ago(5) }];
+  assert.equal(findRecurring(pay, now)[0].rise, 150);
+  const steady = [...[96, 66, 35, 5].map((d) => ({ merchant: 'Jio', amount: 299, date: ago(d) }))];
+  assert.equal(findRecurring(steady, now)[0].rise, null);
+});

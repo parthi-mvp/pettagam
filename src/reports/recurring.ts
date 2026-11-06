@@ -13,6 +13,10 @@ export type Recurring = {
   /** When the next one is expected (last + typical gap). */
   next: number;
   category: string | null;
+  /** The latest charge went up from the usual (a price rise): by how much, else null. */
+  rise: number | null;
+  /** The latest charge. */
+  latest: number;
 };
 
 const DAY = 86_400_000;
@@ -62,6 +66,8 @@ export function findRecurring(payments: Payment[], now = Date.now()): Recurring[
     if (near(amounts, amount, 0.35) < 0.7) continue;
     const last = sorted[sorted.length - 1];
     if (now - last.date > gap * 1.5 * DAY) continue;
+    const usual = median(amounts.slice(0, -1));
+    const rise = last.amount - usual >= Math.max(usual * 0.05, 10) ? last.amount - usual : null;
     out.push({
       merchant: last.merchant.trim(),
       cadence: fit.cadence,
@@ -71,6 +77,8 @@ export function findRecurring(payments: Payment[], now = Date.now()): Recurring[
       last: last.date,
       next: last.date + gap * DAY,
       category: last.category ?? null,
+      rise,
+      latest: last.amount,
     });
   }
   return out.sort((a, b) => b.monthly - a.monthly);

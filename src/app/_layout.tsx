@@ -15,6 +15,7 @@ import { startupFonts } from '@/constants/fonts';
 import { migrate } from '@/db/schema';
 import { useTheme } from '@/hooks/use-theme';
 import { AutoSync } from '@/sync/auto-sync';
+import { BackgroundTasks } from '@/components/background-tasks';
 import { AppLockGate } from '@/components/app-lock-gate';
 import { OfflineFrame, setDeviceInsets } from '@/components/offline-banner';
 import { useWelcomeSeen } from '@/onboarding/welcome-seen';
@@ -60,6 +61,7 @@ export default function RootLayout() {
           <SQLiteProvider databaseName="pettagam.db" onInit={initDatabase}>
             <AutoSync />
             <Routes />
+            <BackgroundTasks />
           </SQLiteProvider>
         </ThemeProvider>
         <AppToaster />
@@ -106,6 +108,10 @@ function Routes() {
         <Stack.Screen name="settings/sms-card-test" options={{ title: 'New-SMS card' }} />
         <Stack.Screen name="settings/sms-lab" options={{ title: 'SMS tester' }} />
         <Stack.Screen name="settings/security" options={{ title: 'App lock' }} />
+        <Stack.Screen name="settings/reminders" options={{ title: 'Reminders' }} />
+        <Stack.Screen name="goals" options={{ title: 'Goals' }} />
+        <Stack.Screen name="goal-form" options={{ presentation: 'modal', title: 'Goal' }} />
+        <Stack.Screen name="export" options={{ title: 'Export' }} />
       </Stack.Protected>
       <Stack.Protected guard={!ready}>
         <Stack.Screen name="welcome" options={{ headerShown: false, animation: 'fade' }} />

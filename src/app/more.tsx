@@ -9,6 +9,7 @@ import { aiReady, useAi } from '@/ai/client';
 import { Card, Divider, GroupLabel, Row, Screen, Text } from '@/components/ui';
 import { getSyncStatus, onSyncStatus, refreshPending, type SyncStatus } from '@/sync/drive-sync';
 import { paletteById } from '@/theme/palettes';
+import { useReminderPrefs } from '@/reminders/reminders';
 import { LOCK_AFTER, useAppLock } from '@/security/app-lock';
 import { useThemePreference } from '@/theme/themePreference';
 
@@ -30,6 +31,7 @@ export default function More() {
   const theme = useThemePreference();
   const lock = useAppLock();
   const aiOn = useAi(aiReady);
+  const reminders = useReminderPrefs();
   const [sync, setSync] = useState<SyncStatus>(getSyncStatus());
 
   useEffect(() => {
@@ -49,9 +51,13 @@ export default function More() {
         <Divider />
         <Row icon="trend" title="Budgets" subtitle="Monthly limits and what’s left" onPress={() => router.push('/budgets')} />
         <Divider />
+        <Row icon="ms:savings" title="Goals" subtitle="Save towards a trip, a phone, a fund" onPress={() => router.push('/goals')} />
+        <Divider />
         <Row icon="bag" title="Categories" subtitle="Icons and colours for your spending" onPress={() => router.push('/categories')} />
         <Divider />
         <Row icon="tag" title="Tags" subtitle="Trips, events and claims across categories" onPress={() => router.push('/tags')} />
+        <Divider />
+        <Row icon="ms:ios_share" title="Export" subtitle="PDF statement or CSV, for any period" onPress={() => router.push('/export')} />
         {aiOn ? (
           <>
             <Divider />
@@ -83,6 +89,8 @@ export default function More() {
           subtitle={`${paletteById(theme.palette).name} · ${MODE_LABEL[theme.preference]}`}
           onPress={() => router.push('/settings/appearance')}
         />
+        <Divider />
+        <Row icon="ms:notifications" title="Reminders" subtitle={reminders.enabled ? `On · ${reminders.daysBefore ? `${reminders.daysBefore} day${reminders.daysBefore > 1 ? 's' : ''} before` : 'on the day'}` : 'Off'} onPress={() => router.push('/settings/reminders')} />
         <Divider />
         <Row icon="lock" title="App lock" subtitle={lock.enabled ? `On · ${LOCK_AFTER.find((o) => o.value === lock.lockAfter)?.label.toLowerCase()}` : 'Off'} onPress={() => router.push('/settings/security')} />
         <Divider />

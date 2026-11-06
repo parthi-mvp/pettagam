@@ -41,6 +41,10 @@ class SmsReaderModule : Module() {
       appContext.reactContext?.let { SmsPopup.test(it, address, body, delayMs.toLong(), notificationOnly) }
       null
     }
+    Function("updateWidget") { label: String, today: String, month: String, scheme: String ->
+      appContext.reactContext?.let { SpendWidget.save(it, label, today, month, scheme) }
+      null
+    }
     Function("closeQuickAdd") {
       QuickAddActivity.close()
       null

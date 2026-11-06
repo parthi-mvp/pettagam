@@ -91,6 +91,20 @@ const MIGRATIONS: string[] = [
   -- Local-only key/value settings (not synced): sync state, SMS scan cursor, etc.
   CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT);
   `,
+  // v2: payment due day (cards) / EMI day (loans), loan terms, and savings goals.
+  `
+  ALTER TABLE accounts ADD COLUMN due_day INTEGER;
+  ALTER TABLE accounts ADD COLUMN interest_rate REAL;
+  ALTER TABLE accounts ADD COLUMN emi REAL;
+  CREATE TABLE goals (${SYNC_COLS},
+    name TEXT NOT NULL,
+    target REAL NOT NULL,
+    target_date INTEGER,
+    account_id TEXT,
+    saved REAL NOT NULL DEFAULT 0,
+    notes TEXT
+  );
+  `,
 ];
 
 // Fixed ids so seeded categories are identical on every device and merge cleanly on sync.

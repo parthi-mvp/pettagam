@@ -26,3 +26,11 @@ export function cardCycles(billingDay: number, now = new Date()): { open: Cycle;
   };
   return { open: cycle(k), last: cycle(k - 1) };
 }
+
+/** The next date (local midnight) that falls on `day` of a month, today included; 31 → the month's last day. */
+export function nextMonthDay(day: number, now = new Date()): number {
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const here = statementIn(y, m, day);
+  return (now.getDate() <= here.getDate() ? here : statementIn(y, m + 1, day)).getTime();
+}

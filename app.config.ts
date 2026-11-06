@@ -70,6 +70,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         cameraPermission: 'Take a photo of a bill or receipt so Pettagam can fill in the transaction.',
       },
     ],
+    ['expo-notifications', { color: '#d4a23f' }],
     ['expo-local-authentication', { faceIDPermission: 'Unlock Pettagam with Face ID so only you can open your money.' }],
   ],
   experiments: {

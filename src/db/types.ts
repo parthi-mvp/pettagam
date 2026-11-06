@@ -34,6 +34,11 @@ export type Account = SyncedRow & {
   notes: string | null;
   /** The card's network ('visa' | 'mastercard' | 'rupay' …, CardNetwork in src/catalog/networks.ts), or null. */
   network: string | null;
+  /** Cards: the day of the month the bill must be paid by. Loans: the EMI day. */
+  due_day?: number | null;
+  /** Loans: interest, % a year, and the monthly EMI. */
+  interest_rate?: number | null;
+  emi?: number | null;
 };
 
 export type CategoryKind = 'expense' | 'income';
@@ -138,7 +143,17 @@ export type Budget = SyncedRow & {
   amount: number;
 };
 
-export type TableName = 'accounts' | 'categories' | 'transactions' | 'investments' | 'investment_entries' | 'budgets';
+/** Saving towards something by a date. Progress is the linked account's balance, or `saved` when none. */
+export type Goal = SyncedRow & {
+  name: string;
+  target: number;
+  target_date: number | null;
+  account_id: string | null;
+  saved: number;
+  notes: string | null;
+};
+
+export type TableName = 'accounts' | 'categories' | 'transactions' | 'investments' | 'investment_entries' | 'budgets' | 'goals';
 
 export const SYNCED_TABLES: TableName[] = [
   'accounts',
@@ -147,6 +162,7 @@ export const SYNCED_TABLES: TableName[] = [
   'investments',
   'investment_entries',
   'budgets',
+  'goals',
 ];
 
 // Order = order in the type sheet: deposits, small savings, retirement, market, gold, insurance, other.

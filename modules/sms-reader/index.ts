@@ -10,6 +10,7 @@ type NativeSmsReader = {
   canDrawOverlays(): boolean;
   openOverlaySettings(): void;
   closeQuickAdd(): void;
+  updateWidget(label: string, today: string, month: string, scheme: string): void;
   testPopup(address: string, body: string, delayMs: number, notificationOnly: boolean): void;
   readInbox(sinceMs: number, limit: number, untilMs?: number | null): Promise<InboxSms[]>;
 };
@@ -59,3 +60,8 @@ export async function requestSmsPopupPermissions(): Promise<boolean> {
 /** Developer: show the card (or only the notification) for a made-up SMS after `delayMs`. */
 export const testSmsPopup = (address: string, body: string, delayMs: number, notificationOnly: boolean) =>
   Native?.testPopup(address, body, delayMs, notificationOnly);
+
+// ---- Home-screen widget ----
+
+/** Redraw the home-screen widget with these figures; `scheme` is the app's link scheme, for its Add button. */
+export const updateWidget = (label: string, today: string, month: string, scheme: string) => Native?.updateWidget?.(label, today, month, scheme);

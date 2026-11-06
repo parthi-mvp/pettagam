@@ -14,6 +14,7 @@ import type {
   AccountType,
   Budget,
   Category,
+  Goal,
   Investment,
   InvestmentEntry,
   SyncedRow,
@@ -32,7 +33,9 @@ type RowOf<T extends TableName> = T extends 'accounts'
         ? Investment
         : T extends 'budgets'
           ? Budget
-          : InvestmentEntry;
+          : T extends 'goals'
+            ? Goal
+            : InvestmentEntry;
 
 export type NewRow<T extends TableName> = Omit<RowOf<T>, keyof SyncedRow> & Partial<Pick<SyncedRow, 'id'>>;
 

@@ -14,6 +14,7 @@ import { Motion } from '@/constants/theme';
 import { useLiveQuery } from '@/db/events';
 import { listTransactions } from '@/db/repo';
 import { cn } from '@/lib/cn';
+import { nextMonthDay } from '@/lib/card-cycle';
 import { dateLabel, money, monthRange, tidyName } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
 import { budgetOverview } from '@/budget/queries';
@@ -73,13 +74,9 @@ function shortDay(ms: number) {
 }
 
 /** Next date for a given day of month (e.g. a card's statement day). */
-function nextDay(day: number) {
-  const now = new Date();
-  const thisMonth = new Date(now.getFullYear(), now.getMonth(), Math.min(day, 28));
-  return thisMonth.getTime() >= new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-    ? thisMonth
-    : new Date(now.getFullYear(), now.getMonth() + 1, Math.min(day, 28));
-}
+const shortDate = (t: number) => new Date(t).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+/** Due within 3 days: shown in the warning colour. */
+const isSoon = (t: number) => t - Date.now() < 3 * 86_400_000;
 
 export default function Home() {
   const db = useSQLiteContext();
@@ -144,7 +141,8 @@ export default function Home() {
   const cardDues = (nw?.cards ?? []).filter((c) => c.due > 0.5);
   // Next installment after this month's dividend (estimated until the auction is recorded); finished chits drop off.
   const chits = (nw?.chits ?? []).filter((c) => !c.summary.done && c.summary.next);
-  const hasDues = cardDues.length > 0 || chits.length > 0;
+  const emis = nw?.emis ?? [];
+  const hasDues = cardDues.length > 0 || chits.length > 0 || emis.length > 0;
   const empty = recent && recent.length === 0 && nw && nw.bankCount === 0 && nw.investments === 0;
 
   const onRefresh = async () => {
@@ -308,22 +306,41 @@ export default function Home() {
             <Section i={2}>
               <SectionTitle title="Upcoming dues" action="Accounts" onAction={() => router.push('/accounts')} />
               <Card className="rounded-2xl px-3 py-0.5">
-                {cardDues.map((c, i) => (
-                  <View key={c.id}>
-                    {i > 0 ? <Divider /> : null}
-                    <Row
-                      icon="card"
-                      title={`${c.name}${c.last4 ? ` ••${c.last4}` : ''}`}
-                      subtitle={c.billingDay ? `Statement ${dateLabel(nextDay(c.billingDay).getTime()).slice(0, 6)}` : 'Outstanding'}
-                      subtitleColor={c.billingDay ? warning : undefined}
-                      right={money(c.due)}
-                      onPress={() => router.push({ pathname: '/account-form', params: { id: c.id } })}
-                    />
-                  </View>
-                ))}
+                {cardDues.map((c, i) => {
+                  const pay = c.dueDay ? nextMonthDay(c.dueDay) : null;
+                  return (
+                    <View key={c.id}>
+                      {i > 0 ? <Divider /> : null}
+                      <Row
+                        icon="card"
+                        title={`${c.name}${c.last4 ? ` ••${c.last4}` : ''}`}
+                        subtitle={pay ? `Pay by ${shortDate(pay)}` : c.billingDay ? `Statement ${shortDate(nextMonthDay(c.billingDay))}` : 'Outstanding'}
+                        subtitleColor={pay && isSoon(pay) ? warning : undefined}
+                        right={money(c.due)}
+                        onPress={() => router.push({ pathname: '/account-form', params: { id: c.id } })}
+                      />
+                    </View>
+                  );
+                })}
+                {emis.map((l, i) => {
+                  const on = nextMonthDay(l.dueDay);
+                  return (
+                    <View key={l.id}>
+                      {i > 0 || cardDues.length > 0 ? <Divider /> : null}
+                      <Row
+                        icon="bank"
+                        title={`${l.name} EMI`}
+                        subtitle={`${shortDate(on)} · ${money(l.outstanding)} left`}
+                        subtitleColor={isSoon(on) ? warning : undefined}
+                        right={l.emi ? money(l.emi) : undefined}
+                        onPress={() => router.push({ pathname: '/account-form', params: { id: l.id } })}
+                      />
+                    </View>
+                  );
+                })}
                 {chits.map(({ id, name, summary: c }, i) => (
                   <View key={id}>
-                    {i > 0 || cardDues.length > 0 ? <Divider /> : null}
+                    {i > 0 || cardDues.length > 0 || emis.length > 0 ? <Divider /> : null}
                     <Row
                       icon="chit"
                       title={name}

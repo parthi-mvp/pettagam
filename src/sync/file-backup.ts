@@ -34,7 +34,7 @@ export async function saveBackupFile(db: SQLiteDatabase, password: string) {
   const file = new File(Paths.cache, `pettagam-backup-${day}.json`);
   if (file.exists) file.delete();
   file.create();
-  file.write(JSON.stringify(sealed));
+  file.writeSync(JSON.stringify(sealed));
   try {
     await Sharing.shareAsync(file.uri, { mimeType: 'application/json', dialogTitle: 'Save your Pettagam backup' });
     await setSetting(db, 'file_backup_at', String(Date.now()));
