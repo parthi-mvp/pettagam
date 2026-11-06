@@ -5,15 +5,19 @@ import { View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LayoutAnimationConfig, LinearTransition } from 'react-native-reanimated';
 import { toast } from 'sonner-native';
 
-import { INVESTMENT_TYPE_OPTIONS, OptionPicker } from '@/components/pickers';
-import { AmountInput, Button, Card, DateField, Field, FormSection, Screen, Text } from '@/components/ui';
-import { getById, save } from '@/db/repo';
+import { AccountPicker, INVESTMENT_TYPE_OPTIONS, OptionPicker } from '@/components/pickers';
+import { canLinkPrice, PriceLinkField } from '@/components/price-link-field';
+import { AmountInput, Button, Card, DateField, Field, FormSection, Screen, SwitchRow, Text } from '@/components/ui';
+import { useLiveQuery } from '@/db/events';
+import { recomputeInvested, saveEntry } from '@/db/investments';
+import { getById, listAccounts, save } from '@/db/repo';
 import { INVESTMENT_TYPE_LABELS, type Investment, type InvestmentType } from '@/db/types';
 import { money, parseDate, toInputDate } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
 import { DURATION, EASE_OUT } from '@/theme/motion';
 import { addMonths, CHIT_DEFAULTS, MAX_COMMISSION_PCT } from '@/lib/chit';
-import { defaultInflowKind, fdAccruedValue, parseDetails, usesMaturity, usesRate, usesUnits, type ChitDetails, usesGrams, isFdLike } from '@/lib/invest';
+import { defaultInflowKind, fdAccruedValue, parseDetails, usesMaturity, usesRate, usesUnits, type ChitDetails, type PriceLink, usesGrams, isFdLike } from '@/lib/invest';
+import { refreshPrices } from '@/invest/prices';
 
 // Sections that come and go with the type fade in, leave faster, and the rest slide to fill the gap.
 const ENTER = FadeIn.duration(DURATION.enter).easing(EASE_OUT);
@@ -50,6 +54,11 @@ export default function InvestmentForm() {
   const [gstPct, setGstPct] = useState(String(CHIT_DEFAULTS.gstPct));
   const [paidCount, setPaidCount] = useState('');
   const [notes, setNotes] = useState('');
+  const [link, setLink] = useState<PriceLink>({});
+  const [linkName, setLinkName] = useState<string | null>(null);
+  const [paidFrom, setPaidFrom] = useState(false);
+  const [accountId, setAccountId] = useState<string | null>(null);
+  const { data: accounts } = useLiveQuery(listAccounts, ['accounts']);
 
   useEffect(() => {
     if (!id) return;
@@ -73,6 +82,7 @@ export default function InvestmentForm() {
       setCommissionPct(String(d.commissionPct ?? CHIT_DEFAULTS.commissionPct));
       setGstPct(String(d.gstPct ?? CHIT_DEFAULTS.gstPct));
       setNotes(i.notes ?? '');
+      setLink(parseDetails<PriceLink>(i));
     });
   }, [db, id]);
 
@@ -89,6 +99,7 @@ export default function InvestmentForm() {
   const defaultInstallment = num(chitValue) && (num(members) ?? num(months)) ? Math.round(num(chitValue)! / (num(members) ?? num(months))!) : null;
 
   const onSave = async () => {
+    if (!existing && paidFrom && !accountId) return toast.error('Pick the account you paid from');
     const inv = num(invested) ?? 0;
     const cur = num(current) ?? fdSuggestion ?? inv;
     if (type === 'chit') {
@@ -109,7 +120,9 @@ export default function InvestmentForm() {
             commissionPct: num(commissionPct) ?? CHIT_DEFAULTS.commissionPct,
             gstPct: num(gstPct) ?? CHIT_DEFAULTS.gstPct,
           } satisfies ChitDetails)
-        : (existing?.details ?? null);
+        : canLinkPrice(type) && (link.mfScheme || link.coinId)
+          ? JSON.stringify({ ...(existing ? parseDetails(existing) : {}), ...link })
+          : (existing?.details ?? null);
     // A chit ends with its last installment: start + (months − 1).
     const chitEnd = type === 'chit' && startMs && num(months) ? addMonths(startMs, num(months)! - 1) : null;
     const newId = await save(db, 'investments', {
@@ -118,26 +131,34 @@ export default function InvestmentForm() {
       name: name.trim() || defaultName,
       institution: institution.trim() || null,
       invested_amount: existing ? existing.invested_amount : inv,
-      current_value: type === 'chit' && !existing ? inv : Math.round(cur * 100) / 100,
-      quantity: num(quantity),
+      // Worked out from the entries (src/db/investments.ts); this is only the starting point.
+      current_value: existing ? existing.current_value : type === 'chit' ? inv : Math.round(cur * 100) / 100,
+      quantity: existing ? existing.quantity : num(quantity),
       interest_rate: num(rate),
       start_date: startMs,
       maturity_date: maturityMs ?? chitEnd,
       details,
       notes: notes.trim() || null,
     });
-    // New holding: record the initial amount as the first entry so history is complete.
-    if (!existing && inv > 0) {
-      await save(db, 'investment_entries', {
-        investment_id: newId,
+    // New holding: record the initial amount as the first entry so history is complete, and (if
+    // asked) in the account it was paid from. A different value today becomes a value update.
+    const created = existing ? null : await getById(db, 'investments', newId);
+    if (created && inv > 0) {
+      await saveEntry(db, created, {
         kind: defaultInflowKind(type),
         date: startMs ?? now,
         amount: inv,
         // For chits, units = how many installments the opening amount covers.
         units: type === 'chit' ? (num(paidCount) ?? 1) : num(quantity),
         note: type === 'chit' && num(paidCount) ? `Opening: ${num(paidCount)} installments` : 'Opening amount',
+        accountId: paidFrom ? accountId : null,
       });
-    }
+      const today = num(current);
+      if (type !== 'chit' && !isFdLike(type) && today != null && Math.abs(today - inv) >= 1) {
+        await saveEntry(db, created, { kind: 'valuation', date: now, amount: today, units: usesUnits(type) ? num(quantity) : null, note: null, accountId: null });
+      }
+    } else if (existing) await recomputeInvested(db, newId);
+    if (link.mfScheme || link.coinId) refreshPrices(db, true).catch(() => {});
     haptic.success();
     toast.success(existing ? 'Changes saved' : `${name.trim() || defaultName} added`);
     router.back();
@@ -171,6 +192,37 @@ export default function InvestmentForm() {
             ) : null}
           </Card>
         </Section>
+
+        {!existing && type !== 'chit' ? (
+          <Section>
+            <FormSection>
+              <SwitchRow
+                title="Paid from one of my accounts"
+                description="Records it in that account too, so its balance is right. Not counted as spending."
+                value={paidFrom}
+                onValueChange={setPaidFrom}
+              />
+              {paidFrom ? <AccountPicker label="Paid from" accounts={accounts ?? []} value={accountId} onChange={setAccountId} /> : null}
+            </FormSection>
+          </Section>
+        ) : null}
+
+        {canLinkPrice(type) ? (
+          <Section key={`link-${type}`}>
+            <FormSection title={type === 'mutual_fund' ? 'Live NAV' : 'Live price'}>
+              <PriceLinkField
+                type={type}
+                value={link}
+                label={linkName ?? (link.mfScheme || link.coinId ? name || null : null)}
+                onChange={(p) => {
+                  setLink(p?.link ?? {});
+                  setLinkName(p?.name ?? null);
+                  if (p && !name.trim()) setName(p.name);
+                }}
+              />
+            </FormSection>
+          </Section>
+        ) : null}
 
         <Section>
           <FormSection title="Details">
@@ -266,15 +318,21 @@ export default function InvestmentForm() {
                   : null}
               </View>
             ) : null}
-            <Field
-              label="Current value"
-              prefix="₹"
-              value={current}
-              onChangeText={setCurrent}
-              keyboardType="decimal-pad"
-              placeholder={fdSuggestion ? fdSuggestion.toFixed(0) : invested || 'Same as invested'}
-              hint={fdSuggestion ? 'Leave blank to use the estimate above (quarterly compounding).' : 'Leave blank if it hasn’t changed.'}
-            />
+            {existing ? (
+              <Text variant="caption">The value is worked out from the entries, prices and interest rate. Update it on the investment’s screen.</Text>
+            ) : isFdLike(type) ? (
+              <Text variant="caption">Its value grows on its own at the interest rate.</Text>
+            ) : (
+              <Field
+                label="Current value"
+                prefix="₹"
+                value={current}
+                onChangeText={setCurrent}
+                keyboardType="decimal-pad"
+                placeholder={invested || 'Same as invested'}
+                hint={canLinkPrice(type) && (link.mfScheme || link.coinId) ? 'Leave blank: the live price sets it.' : 'Leave blank if it hasn’t changed.'}
+              />
+            )}
           </FormSection>
         </Section>
 

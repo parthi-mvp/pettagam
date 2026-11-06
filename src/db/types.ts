@@ -135,6 +135,10 @@ export type InvestmentEntry = SyncedRow & {
   amount: number;
   units: number | null;
   note: string | null;
+  /** The account the money came from (buy, SIP) or went into (sell, payout, dividend), if recorded. */
+  account_id?: string | null;
+  /** The transaction recording that money in the account (src/db/investments.ts keeps the two in step). */
+  txn_id?: string | null;
 };
 
 /** A monthly spending limit. category_id null = the overall budget for all spending. */

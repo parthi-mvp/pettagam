@@ -2,7 +2,6 @@ import * as Crypto from 'expo-crypto';
 import type { SQLiteBindValue, SQLiteDatabase } from 'expo-sqlite';
 
 import { CATEGORY_COLORS } from '@/catalog/categories';
-import { parseDetails, type ChitDetails } from '@/lib/invest';
 import { parseTags, replaceTag, tagsColumn } from '@/lib/tags';
 
 import { changedColumns } from '@/sync/crdt';
@@ -201,6 +200,8 @@ export type TxnRow = Transaction & {
   category_name: string | null;
   category_color: string | null;
   category_icon: string | null;
+  /** 1 when the other side is an investment (money into / out of it, src/db/investments.ts). */
+  is_investment: number;
 };
 
 export function listTransactions(
@@ -232,10 +233,14 @@ export function listTransactions(
   }
   params.push(f.limit ?? 500);
   return db.getAllAsync<TxnRow>(
-    `SELECT t.*, a.name AS account_name, ta.name AS to_account_name, c.name AS category_name, c.color AS category_color, c.icon AS category_icon
+    `SELECT t.*, COALESCE(a.name, ia.name) AS account_name, COALESCE(ta.name, ita.name) AS to_account_name,
+            c.name AS category_name, c.color AS category_color, c.icon AS category_icon,
+            (ia.id IS NOT NULL OR ita.id IS NOT NULL) AS is_investment
      FROM transactions t
      LEFT JOIN accounts a ON a.id = t.account_id
      LEFT JOIN accounts ta ON ta.id = t.to_account_id
+     LEFT JOIN investments ia ON ia.id = t.account_id
+     LEFT JOIN investments ita ON ita.id = t.to_account_id
      LEFT JOIN categories c ON c.id = t.category_id
      WHERE ${where.join(' AND ')}
      ORDER BY t.date DESC LIMIT ?`,
@@ -265,41 +270,6 @@ export async function accountBalances(db: SQLiteDatabase): Promise<Record<string
     out[r.id] = balanceOf(r.type, r.opening_balance, r.flow);
   }
   return out;
-}
-
-/** Recompute an investment's invested_amount from its entries (buys/contributions − sells/payouts). */
-export async function recomputeInvested(db: SQLiteDatabase, investmentId: string) {
-  const r = await db.getFirstAsync<{ invested: number; units: number | null; hasUnits: number }>(
-    `SELECT
-       COALESCE(SUM(CASE WHEN kind IN ('buy','contribution') THEN amount WHEN kind IN ('sell','payout') THEN -amount ELSE 0 END), 0) AS invested,
-       SUM(CASE WHEN kind = 'buy' THEN COALESCE(units,0) WHEN kind = 'sell' THEN -COALESCE(units,0) ELSE 0 END) AS units,
-       COUNT(units) AS hasUnits
-     FROM investment_entries WHERE deleted = 0 AND investment_id = ?`,
-    [investmentId]
-  );
-  if (!r) return;
-  const inv = await getById(db, 'investments', investmentId);
-  if (!inv) return;
-  const { id: _id, created_at: _c, updated_at: _u, deleted: _d, ...rest } = inv;
-  if (inv.type === 'chit') {
-    // A chit prize isn't a withdrawal of what you put in: invested = installments paid. Once prized the
-    // pot has been paid out, so the chit itself holds nothing; what you still owe is counted in net worth.
-    const c = await db.getFirstAsync<{ paid: number; prize: number }>(
-      `SELECT COALESCE(SUM(CASE WHEN kind IN ('buy','contribution') THEN amount END), 0) AS paid,
-              COALESCE(SUM(CASE WHEN kind = 'payout' THEN amount END), 0) AS prize
-       FROM investment_entries WHERE deleted = 0 AND investment_id = ?`,
-      [investmentId]
-    );
-    const prized = (c?.prize ?? 0) > 0 || parseDetails<ChitDetails>(inv).wonMonth != null;
-    await save(db, 'investments', { ...rest, id: investmentId, invested_amount: c?.paid ?? 0, current_value: prized ? 0 : (c?.paid ?? 0) });
-    return;
-  }
-  await save(db, 'investments', {
-    ...rest,
-    id: investmentId,
-    invested_amount: r.invested,
-    quantity: r.hasUnits > 0 ? r.units : inv.quantity,
-  });
 }
 
 export async function getSetting(db: SQLiteDatabase, key: string) {

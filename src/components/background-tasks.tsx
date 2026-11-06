@@ -5,6 +5,8 @@ import { useEffect } from 'react';
 import { AppState } from 'react-native';
 
 import { onDataChange } from '@/db/events';
+import { refreshInvestments } from '@/db/investments';
+import { refreshPrices } from '@/invest/prices';
 import { syncReminders, useReminderPrefs } from '@/reminders/reminders';
 
 // Reminders shown while the app is open still appear as a banner.
@@ -16,17 +18,28 @@ const AFTER_EDIT_MS = 2_000;
 
 /**
  * Work that follows the data without a screen: reschedules bill reminders on open, on return to
- * the app and shortly after any edit; opens the right screen when a reminder is tapped.
+ * the app and shortly after any edit; brings investment values and prices up to date on open and
+ * return; opens the right screen when a reminder is tapped.
  */
 export function BackgroundTasks() {
   const db = useSQLiteContext();
 
   useEffect(() => {
     const run = () => syncReminders(db).catch(() => {});
+    // On open and return only (not after edits, which revalue their own investment): interest
+    // estimates move on by the day, fund NAVs and coin prices by the hour.
+    const revalue = () =>
+      refreshInvestments(db)
+        .then(() => refreshPrices(db))
+        .catch(() => {});
     let debounce: ReturnType<typeof setTimeout> | undefined;
     run();
+    revalue();
     const appState = AppState.addEventListener('change', (s) => {
-      if (s === 'active') run();
+      if (s === 'active') {
+        run();
+        revalue();
+      }
     });
     const unsubscribe = onDataChange(() => {
       clearTimeout(debounce);

@@ -1,5 +1,7 @@
 import type { Investment, InvestmentType } from '@/db/types';
 
+import type { Compounding } from './holding';
+
 export type { ChitDetails } from './chit';
 
 export function parseDetails<T = Record<string, unknown>>(inv: Pick<Investment, 'details'>): T {
@@ -32,3 +34,10 @@ export const usesMaturity = is('fd', 'rd', 'bond', 'chit', 'ppf', 'corporate_fd'
 /** Lump sum compounding quarterly: gets the "≈ value today" estimate. */
 export const isFdLike = is('fd', 'corporate_fd', 'po_td');
 
+
+/** How each type's interest grows, for its live estimate (src/lib/holding.ts). Pay-out schemes stay at principal. */
+export const compoundingOf = (t: InvestmentType): Compounding | null =>
+  is('fd', 'corporate_fd', 'po_td', 'rd')(t) ? 'quarterly' : is('ppf', 'epf', 'ssy', 'nsc', 'kvp')(t) ? 'yearly' : null;
+
+/** Market price lookups this app can make (src/invest/prices.ts). */
+export type PriceLink = { mfScheme?: number; coinId?: string; symbol?: string; livePrice?: number; livePriceAt?: number };

@@ -61,7 +61,7 @@ function TxnRowItem({ r }: { r: TxnRow }) {
   const tags = parseTags(r.tags).map((t) => `#${t}`);
   // How it was paid (UPI, Card, NEFT…), when the SMS said so.
   const via = viaLabel(r.via);
-  const subtitle = [transfer ? 'Transfer' : (r.category_name ?? 'Uncategorised'), transfer ? null : r.account_name, via, ...tags].filter(Boolean).join(' · ');
+  const subtitle = [transfer ? (r.is_investment ? 'Investment' : 'Transfer') : (r.category_name ?? 'Uncategorised'), transfer ? null : r.account_name, via, ...tags].filter(Boolean).join(' · ');
   return (
     <Row
       icon={categoryIcon(r.category_name, r.type, r.category_icon)}

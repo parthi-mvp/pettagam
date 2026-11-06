@@ -105,6 +105,11 @@ const MIGRATIONS: string[] = [
     notes TEXT
   );
   `,
+  // v3: an investment entry paid from / into one of your accounts, and the transaction that records it there.
+  `
+  ALTER TABLE investment_entries ADD COLUMN account_id TEXT;
+  ALTER TABLE investment_entries ADD COLUMN txn_id TEXT;
+  `,
 ];
 
 // Fixed ids so seeded categories are identical on every device and merge cleanly on sync.

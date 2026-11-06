@@ -4,7 +4,8 @@ import { Pressable, View } from 'react-native';
 import { toast } from 'sonner-native';
 
 import { aiChitAdvice } from '@/ai/features';
-import { recomputeInvested, save } from '@/db/repo';
+import { recomputeInvested } from '@/db/investments';
+import { save } from '@/db/repo';
 import type { Investment, InvestmentEntry } from '@/db/types';
 import { useTheme } from '@/hooks/use-theme';
 import {

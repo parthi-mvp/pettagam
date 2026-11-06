@@ -17,8 +17,10 @@ import { Icon } from '@/components/icons';
 import { AccountPicker, CategoryGrid, CategoryTile, useUsage } from '@/components/pickers';
 import { AmountInput, BackButton, Button, Card, Chips, DateField, dialog, Field, GroupLabel, HeroBackdrop, IconTile, OptionRow, PressableScale, Sheet, StickyFooter, Text, type SheetRef } from '@/components/ui';
 import { useLiveQuery } from '@/db/events';
-import { getById, listAccounts, listCategories, save, softDelete, tagTotals } from '@/db/repo';
-import type { AccountType, CategoryKind, Transaction, TxnType } from '@/db/types';
+import { entryForTxn, linkTransaction } from '@/db/investments';
+import { getById, listAccounts, listCategories, listInvestments, save, softDelete, tagTotals } from '@/db/repo';
+import { INVESTMENT_TYPE_LABELS, type AccountType, type CategoryKind, type Transaction, type TxnType } from '@/db/types';
+import { defaultInflowKind, usesUnits } from '@/lib/invest';
 import { VIA_LABELS, type Via } from '@/sms/parser';
 import { money, parseDate, toInputDate, monthRange } from '@/lib/format';
 import { budgetAlert } from '@/budget/alert';
@@ -102,10 +104,16 @@ export default function TransactionForm() {
   const [filling, setFilling] = useState(false);
   const catSheet = useRef<SheetRef>(null);
   const scanSheet = useRef<SheetRef>(null);
+  const invSheet = useRef<SheetRef>(null);
+  const { data: investments } = useLiveQuery(listInvestments, ['investments']);
   const ai = useAi(aiReady);
 
   useEffect(() => {
     if (!params.id) return;
+    // Money into or out of an investment is edited there (it keeps the two in step).
+    entryForTxn(db, params.id).then((e) => {
+      if (e) router.replace({ pathname: '/investment/[id]', params: { id: e.investment_id } });
+    });
     getById(db, 'transactions', params.id).then((t) => {
       if (!t) return;
       setExisting(t);
@@ -563,6 +571,15 @@ export default function TransactionForm() {
           ) : null}
 
           <View className="gap-2">
+            {existing && existing.type !== 'transfer' && investments?.some((i) => i.type !== 'chit') ? (
+              <OptionRow
+                leading={<IconTile icon="trend" size={36} />}
+                title="This is an investment"
+                subtitle={existing.type === 'expense' ? 'A SIP, FD, stocks… Moves it out of spending' : 'Money back from an investment: a redemption or maturity'}
+                trailing={<Icon name="chevronRight" size={18} color={chevron} />}
+                onPress={() => invSheet.current?.present()}
+              />
+            ) : null}
             {existing ? (
               <Pressable onPress={onDelete} accessibilityRole="button" hitSlop={6} className="items-center py-2.5 active:opacity-60">
                 <Text variant="label" tone="danger">
@@ -608,6 +625,29 @@ export default function TransactionForm() {
             Manage categories
           </Text>
         </Pressable>
+      </Sheet>
+
+      <Sheet ref={invSheet} title="Which investment?" subtitle="It becomes an entry there, and stays in this account as a transfer, not spending." scrollable lazy>
+        <View className="gap-2">
+          {(investments ?? [])
+            .filter((i) => i.type !== 'chit')
+            .map((i) => (
+              <OptionRow
+                key={i.id}
+                leading={<IconTile icon="trend" size={36} />}
+                title={i.name}
+                subtitle={`${INVESTMENT_TYPE_LABELS[i.type]} · ${money(i.current_value)}`}
+                onPress={async () => {
+                  invSheet.current?.dismiss();
+                  if (!existing) return;
+                  await linkTransaction(db, existing.id, i, existing.type === 'income' ? 'payout' : defaultInflowKind(i.type), null);
+                  haptic.success();
+                  toast.success(`Moved to ${i.name}`, { description: usesUnits(i.type) ? 'Add the units on the entry.' : undefined });
+                  router.replace({ pathname: '/investment/[id]', params: { id: i.id } });
+                }}
+              />
+            ))}
+        </View>
       </Sheet>
 
       <Sheet ref={scanSheet} title="Scan a bill" subtitle="AI reads the amount, merchant and date, and fills the form." onDismiss={onScanSheetDismiss}>
