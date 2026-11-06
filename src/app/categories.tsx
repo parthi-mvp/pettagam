@@ -1,3 +1,4 @@
+import { EmptyArt } from '@/components/empty-art';
 import { router, Stack } from 'expo-router';
 import { useState } from 'react';
 import { View } from 'react-native';
@@ -48,9 +49,12 @@ export default function Categories() {
           </View>
         ))}
         {categories && list.length === 0 ? (
-          <Text variant="muted" className="py-4 text-center">
-            {q ? `No ${kind} category matches “${query.trim()}”` : `No ${kind} categories yet.`}
-          </Text>
+          <View className="items-center gap-3 py-4">
+            <EmptyArt kind={q ? 'search' : 'tags'} />
+            <Text variant="muted" className="text-center">
+              {q ? `No ${kind} category matches “${query.trim()}”` : `No ${kind} categories yet.`}
+            </Text>
+          </View>
         ) : null}
       </Card>
     </Screen>

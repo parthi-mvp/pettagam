@@ -66,6 +66,7 @@ export default function Budgets() {
 
       {none ? (
         <Empty
+          art="budgets"
           text={'Set a monthly limit for all your spending, or for categories like Food and Shopping.\nPettagam shows what’s left and warns you before you go over.'}
           action={
             <View className="gap-2">

@@ -358,6 +358,7 @@ export default function Home() {
           {empty ? (
             <Section i={3}>
               <Empty
+                art="accounts"
                 text={'Start by adding your bank accounts and cards.\nAdd the last 4 digits so bank SMS match automatically.'}
                 action={<Button size="sm" title="Add account" icon="plus" onPress={() => router.push('/account-form')} />}
               />

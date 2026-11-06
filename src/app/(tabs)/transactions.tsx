@@ -76,6 +76,7 @@ export default function Activity() {
 
       {rows && shown.length === 0 ? (
         <Empty
+          art={search.trim() ? 'search' : 'transactions'}
           text={search.trim() ? `Nothing matches “${search.trim()}” this month.` : filter === 'all' ? 'Nothing recorded this month yet.' : 'Nothing of this kind this month.'}
           action={!search.trim() && filter === 'all' ? <Button size="sm" icon="plus" title="Add transaction" onPress={() => router.push('/transaction-form')} /> : undefined}
         />

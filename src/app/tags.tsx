@@ -22,9 +22,9 @@ export default function Tags() {
       </Text>
       {tags && tags.length > 0 ? <SearchBox value={query} onChange={setQuery} placeholder="Search tags" /> : null}
       {tags && tags.length === 0 ? (
-        <Empty text="No tags yet. Open a transaction and add one, like “Goa trip”." />
+        <Empty art="tags" text="No tags yet. Open a transaction and add one, like “Goa trip”." />
       ) : q && shown.length === 0 ? (
-        <Empty text={`No tag matches “${query.trim()}”`} />
+        <Empty art="search" text={`No tag matches “${query.trim()}”`} />
       ) : (
         <Card className="gap-0 py-1">
           {shown.map((t, i) => (

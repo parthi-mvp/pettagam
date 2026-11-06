@@ -1,3 +1,4 @@
+import { EmptyArt, type EmptyArtKind } from '../empty-art';
 import type { ComponentProps, ReactNode } from 'react';
 import { Pressable, ScrollView, View, type ViewProps } from 'react-native';
 import { KeyboardAwareScrollView, KeyboardStickyView } from 'react-native-keyboard-controller';
@@ -253,9 +254,11 @@ export function Divider({ className }: { className?: string }) {
   return <View className={cn('h-px bg-line', className)} />;
 }
 
-export function Empty({ text, action }: { text: string; action?: ReactNode }) {
+/** An empty list: an illustration of what will be here (src/components/empty-art.tsx), a line, and the action that fills it. */
+export function Empty({ text, action, art }: { text: string; action?: ReactNode; art?: EmptyArtKind }) {
   return (
     <Card className="items-center gap-4 py-8">
+      {art ? <EmptyArt kind={art} /> : null}
       <Text variant="muted" className="text-center">
         {text}
       </Text>

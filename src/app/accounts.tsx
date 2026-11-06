@@ -70,7 +70,7 @@ export default function Accounts() {
       <Stack.Screen options={{ headerRight: () => <Button size="sm" variant="tinted" icon="plus" title="Add" onPress={() => router.push('/account-form')} /> }} />
 
       {data && accounts.length === 0 ? (
-        <Empty text="Add your bank accounts, credit cards, wallets and cash. Enter the last 4 digits so SMS alerts get matched automatically." />
+        <Empty art="accounts" text="Add your bank accounts, credit cards, wallets and cash. Enter the last 4 digits so SMS alerts get matched automatically." />
       ) : null}
 
       {accounts.length ? (

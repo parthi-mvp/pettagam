@@ -56,7 +56,7 @@ export default function TagDetail() {
       <Stack.Screen options={{ title: `#${name}` }} />
 
       {rows && all.length === 0 ? (
-        <Empty text="No entries carry this tag any more." />
+        <Empty art="tags" text="No entries carry this tag any more." />
       ) : (
         <>
           <Card className="gap-2">

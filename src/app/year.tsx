@@ -95,7 +95,7 @@ export default function YearInReview() {
       </View>
 
       {months && spent === 0 && earned === 0 ? (
-        <Empty text={`Nothing recorded in ${p.label}.`} />
+        <Empty art="chart" text={`Nothing recorded in ${p.label}.`} />
       ) : (
         <>
           {/* The year in four numbers. */}

@@ -20,6 +20,7 @@ export default function Goals() {
       <Stack.Screen options={{ headerRight: () => <Button size="sm" variant="tinted" title="Add" onPress={() => router.push('/goal-form')} /> }} />
       {goals?.length === 0 ? (
         <Empty
+          art="goals"
           text={'Save towards something: a trip, a phone, an emergency fund.\nPettagam shows how much to put aside each month.'}
           action={<Button size="sm" title="Add a goal" icon="plus" onPress={() => router.push('/goal-form')} />}
         />

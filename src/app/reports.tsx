@@ -329,7 +329,7 @@ export default function Reports() {
           {/* Where it went: every category, ranked. */}
           <Block title="Where it went" detail={shares.length ? `${shares.length} categories` : undefined}>
             {cats && shares.length === 0 ? (
-              <Empty text="No spending recorded this month." />
+              <Empty art="chart" text="No spending recorded this month." />
             ) : (
               <Card className={CARD}>
                 <RankedShares items={shares} total={spent} />
@@ -456,7 +456,7 @@ export default function Reports() {
 
       {tab === 'bills' ? (
         <>
-          {cardsDue?.length === 0 && recurring?.length === 0 ? <Empty text="No credit cards or recurring payments yet." /> : null}
+          {cardsDue?.length === 0 && recurring?.length === 0 ? <Empty art="calendar" text="No credit cards or recurring payments yet." /> : null}
           {/* Credit cards by billing cycle, not calendar month: what the next statement will hold. */}
           {cardsDue && cardsDue.length > 0 ? (
             <Block title="Card statements" action="Accounts" onAction={() => router.push('/accounts')}>

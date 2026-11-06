@@ -58,6 +58,7 @@ export default function Investments() {
       <Screen tab>
         <Header title="Investments" />
         <Empty
+          art="investments"
           text={'Track FDs, post office schemes, PPF, EPF, NPS, mutual funds, stocks, gold, chit funds and more.\nEverything you own, in one place.'}
           action={<Button size="sm" icon="plus" title="Add investment" onPress={() => router.push('/investment-form')} />}
         />

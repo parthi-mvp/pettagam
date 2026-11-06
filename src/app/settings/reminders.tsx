@@ -1,7 +1,7 @@
 import { router, type Href } from 'expo-router';
 import { Alert, Linking, View } from 'react-native';
 
-import { Card, Chips, Divider, FormSection, Row, Screen, SwitchRow, Text } from '@/components/ui';
+import { Card, Chips, Divider, Empty, FormSection, Row, Screen, SwitchRow, Text } from '@/components/ui';
 import { useLiveQuery } from '@/db/events';
 import { dateLabel, money } from '@/lib/format';
 import { allowNotifications, useReminderPrefs } from '@/reminders/reminders';
@@ -82,11 +82,7 @@ export default function ReminderSettings() {
             ))}
           </Card>
         ) : (
-          <Card>
-            <Text variant="small">
-              Nothing with a due date yet. Add the payment due day to a credit card, or the EMI day to a loan, in Accounts.
-            </Text>
-          </Card>
+          <Empty art="calendar" text="Nothing with a due date yet. Add the payment due day to a credit card, or the EMI day to a loan, in Accounts." />
         )}
       </View>
     </Screen>
