@@ -6,6 +6,8 @@ import { parseDetails } from '@/lib/invest';
 import { parseTags } from '@/lib/tags';
 import { INVESTMENT_TYPE_LABELS, isCardLike, isLiability, type InvestmentType } from '@/db/types';
 import { money, monthLabel, monthRange } from '@/lib/format';
+import { cardCycles, type Cycle } from '@/lib/card-cycle';
+
 import { findRecurring, type Payment } from './recurring';
 
 export type CategorySlice = { id: string | null; name: string; color: string; icon: string | null; total: number };
@@ -266,4 +268,57 @@ export async function categoryTrend(db: SQLiteDatabase, months = 6, now = new Da
   });
   const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
   return [...byId.values()].sort((a, b) => sum(b.months) - sum(a.months));
+}
+
+/** Spending per day of a month (index 0 = the 1st): total and number of entries. */
+export async function dailySpend(db: SQLiteDatabase, start: number, end: number) {
+  const days = Math.round((end - start) / 86_400_000);
+  const out = Array.from({ length: days }, () => ({ total: 0, count: 0 }));
+  const rows = await db.getAllAsync<{ d: number; total: number; count: number }>(
+    `SELECT CAST((date - ?) / 86400000 AS INTEGER) AS d, SUM(amount) AS total, COUNT(*) AS count FROM transactions
+     WHERE deleted = 0 AND type = 'expense' AND date >= ? AND date < ? GROUP BY d`,
+    [start, start, end]
+  );
+  for (const r of rows) if (out[r.d]) out[r.d] = { total: r.total, count: r.count };
+  return out;
+}
+
+export type CardStatement = {
+  id: string;
+  name: string;
+  last4: string | null;
+  network: string | null;
+  limit: number | null;
+  /** Null when the card has no statement day yet. */
+  open: (Cycle & { total: number; count: number; top: CategorySlice[] }) | null;
+  last: (Cycle & { total: number }) | null;
+};
+
+/** Each credit card / pay-later account by billing cycle: the open one so far, and the last statement. */
+export async function cardStatements(db: SQLiteDatabase, now = new Date()): Promise<CardStatement[]> {
+  const cards = (await listAccounts(db)).filter((a) => isCardLike(a.type));
+  const spend = (id: string, c: Cycle) =>
+    db.getFirstAsync<{ total: number | null; count: number }>(
+      `SELECT SUM(amount) AS total, COUNT(*) AS count FROM transactions WHERE deleted = 0 AND type = 'expense' AND account_id = ? AND date >= ? AND date < ?`,
+      [id, c.start, c.end]
+    );
+  return Promise.all(
+    cards.map(async (a) => {
+      const base = { id: a.id, name: a.name, last4: a.last4, network: a.network, limit: a.credit_limit };
+      if (!a.billing_day) return { ...base, open: null, last: null };
+      const { open, last } = cardCycles(a.billing_day, now);
+      const [o, l, top] = await Promise.all([
+        spend(a.id, open),
+        spend(a.id, last),
+        db.getAllAsync<CategorySlice>(
+          `SELECT t.category_id AS id, COALESCE(c.name, 'Uncategorised') AS name, COALESCE(c.color, '#8E8E93') AS color, c.icon AS icon, SUM(t.amount) AS total
+           FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
+           WHERE t.deleted = 0 AND t.type = 'expense' AND t.account_id = ? AND t.date >= ? AND t.date < ?
+           GROUP BY t.category_id ORDER BY total DESC LIMIT 3`,
+          [a.id, open.start, open.end]
+        ),
+      ]);
+      return { ...base, open: { ...open, total: o?.total ?? 0, count: o?.count ?? 0, top }, last: { ...last, total: l?.total ?? 0 } };
+    })
+  );
 }

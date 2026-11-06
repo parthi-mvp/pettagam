@@ -367,3 +367,83 @@ export function CategoryTrendList({ items }: { items: { key: string; name: strin
     </View>
   );
 }
+
+const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+
+/**
+ * A month as a calendar, each day shaded by what was spent (one hue, light to dark; empty days stay
+ * neutral). Tap a day to pick it. Days after `lastDay` (the rest of the running month) are faint.
+ */
+export function SpendCalendar({
+  start,
+  days,
+  lastDay,
+  pick,
+  onPick,
+}: {
+  start: number;
+  days: { total: number; count: number }[];
+  lastDay: number;
+  pick: number | null;
+  onPick: (day: number | null) => void;
+}) {
+  const [accent, fg, onAccent, fill] = useThemeColors(['primary', 'fg', 'on-primary', 'fill'] as const);
+  const lead = (new Date(start).getDay() + 6) % 7; // Monday first
+  const max = Math.max(1, ...days.map((d) => d.total));
+  const cells: (number | null)[] = [...Array(lead).fill(null), ...days.map((_, i) => i)];
+  while (cells.length % 7) cells.push(null);
+  return (
+    <View className="gap-1.5">
+      <View className="flex-row">
+        {WEEKDAYS.map((w, i) => (
+          <Text key={i} variant="caption" align="center" className="flex-1">
+            {w}
+          </Text>
+        ))}
+      </View>
+      <View className="flex-row flex-wrap">
+        {cells.map((i, k) => {
+          if (i == null) return <View key={k} style={{ width: `${100 / 7}%`, aspectRatio: 1 }} />;
+          const d = days[i];
+          const future = i > lastDay;
+          // Square root, so one big day doesn't wash every other day out.
+          const level = d.total > 0 ? 0.18 + 0.82 * Math.sqrt(d.total / max) : 0;
+          const dark = level > 0.6;
+          const label = new Date(new Date(start).getFullYear(), new Date(start).getMonth(), i + 1).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' });
+          return (
+            <View key={k} style={{ width: `${100 / 7}%`, aspectRatio: 1, padding: 2 }}>
+              <PressableScale
+                scaleTo={0.92}
+                disabled={future}
+                onPress={() => onPick(pick === i ? null : i)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: pick === i, disabled: future }}
+                accessibilityLabel={`${label}: ${d.total > 0 ? money(d.total) : 'nothing spent'}`}
+                className="flex-1 items-center justify-center rounded-[8px]"
+                style={{
+                  backgroundColor: level ? accent : fill,
+                  opacity: future ? 0.35 : 1,
+                  borderWidth: pick === i ? 2 : 0,
+                  borderColor: fg,
+                }}>
+                {level ? <View className="absolute inset-0 rounded-[8px]" style={{ backgroundColor: fill, opacity: 1 - level }} /> : null}
+                <Text variant="caption" weight={pick === i ? 'semibold' : 'regular'} tabular style={{ color: dark ? onAccent : fg }}>
+                  {i + 1}
+                </Text>
+              </PressableScale>
+            </View>
+          );
+        })}
+      </View>
+      <View className="flex-row items-center justify-end gap-1.5">
+        <Text variant="caption">Less</Text>
+        {[0, 0.35, 0.65, 1].map((l) => (
+          <View key={l} className="h-2.5 w-2.5 overflow-hidden rounded-[3px]" style={{ backgroundColor: l ? accent : fill }}>
+            {l ? <View className="absolute inset-0" style={{ backgroundColor: fill, opacity: 1 - (0.18 + 0.82 * l) }} /> : null}
+          </View>
+        ))}
+        <Text variant="caption">More</Text>
+      </View>
+    </View>
+  );
+}

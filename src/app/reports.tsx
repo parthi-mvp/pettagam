@@ -7,12 +7,14 @@ import { aiMonthSummary, aiTaxCheck, financialYear } from '@/ai/features';
 import { AiNote } from '@/components/ai-note';
 import { budgetOverview } from '@/budget/queries';
 import { BUDGET_TEXT, BudgetBar } from '@/components/budget-bar';
-import { CashFlowBars, CategoryTrendList, PaceChart, RankedShares } from '@/components/charts';
+import { CashFlowBars, CategoryTrendList, PaceChart, RankedShares, SpendCalendar } from '@/components/charts';
+import { TxnList } from '@/components/txn-list';
+import { listTransactions } from '@/db/repo';
 import { categoryIcon, Icon } from '@/components/icons';
 import { Amount, Button, Card, Divider, Empty, IconTile, MonthSwitcher, Row, Screen, SectionTitle, ShareBar, Text } from '@/components/ui';
 import { useLiveQuery } from '@/db/events';
 import { money, monthRange } from '@/lib/format';
-import { categoryBreakdown, categoryTrend, exportCsv, insights, monthlyTrend, netWorth, paymentMethods, recurringPayments, spendPace, topMerchants } from '@/reports/analytics';
+import { cardStatements, categoryBreakdown, categoryTrend, dailySpend, exportCsv, insights, monthlyTrend, netWorth, paymentMethods, recurringPayments, spendPace, topMerchants } from '@/reports/analytics';
 import { viaLabel } from '@/sms/parser';
 import { SERIES_COLORS } from '@/theme/series';
 import { useThemeColors } from '@/theme/useThemeColor';
@@ -35,6 +37,11 @@ export default function Reports() {
   const db = useSQLiteContext();
   const [offset, setOffset] = useState(0);
   const [today] = useState(() => Date.now());
+  const [day, setDay] = useState<number | null>(null);
+  const changeMonth = (o: number) => {
+    setDay(null);
+    setOffset(o);
+  };
   const { start, end } = monthRange(offset);
   const deps = [start];
   // A past month is read as of its last day, so its pace line runs the whole month.
@@ -47,6 +54,14 @@ export default function Reports() {
   const { data: methods } = useLiveQuery((d) => paymentMethods(d, start, end), ['transactions'], deps);
   const { data: trend } = useLiveQuery((d) => monthlyTrend(d, 6), ['transactions']);
   const { data: catTrend } = useLiveQuery((d) => categoryTrend(d, 6, asOf), ['transactions', 'categories'], deps);
+  const { data: daily } = useLiveQuery((d) => dailySpend(d, start, end), ['transactions'], deps);
+  const dayStart = day == null ? null : new Date(new Date(start).getFullYear(), new Date(start).getMonth(), day + 1).getTime();
+  const { data: dayRows } = useLiveQuery(
+    (d) => (dayStart == null ? Promise.resolve([]) : listTransactions(d, { from: dayStart, to: dayStart + 86_400_000 })),
+    ['transactions', 'accounts', 'categories'],
+    [dayStart]
+  );
+  const { data: cardsDue } = useLiveQuery((d) => cardStatements(d), ['transactions', 'accounts', 'categories']);
   const { data: recurring } = useLiveQuery((d) => recurringPayments(d), ['transactions', 'categories']);
   const { data: nw } = useLiveQuery(netWorth, ['accounts', 'transactions', 'investments', 'investment_entries']);
   const { data: tips } = useLiveQuery(insights, ['transactions', 'accounts', 'investments']);
@@ -80,7 +95,7 @@ export default function Reports() {
     <Screen>
       <Stack.Screen options={{ headerRight: () => <Button size="sm" variant="tinted" title="Export" onPress={onExport} /> }} />
 
-      <MonthSwitcher offset={offset} onChange={setOffset} />
+      <MonthSwitcher offset={offset} onChange={changeMonth} />
 
       {/* The month at a glance: what went out, against last month, then in and kept. */}
       <Card className={`gap-3.5 ${CARD}`}>
@@ -117,6 +132,28 @@ export default function Reports() {
       </Card>
 
       <AiNote key={start} label="Summarise this month with AI" run={() => aiMonthSummary(db, offset)} />
+
+      {/* Each day of the month, shaded by spend; tap one for its entries. */}
+      {daily && pace && daily.some((d) => d.total > 0) ? (
+        <Block title="Daily spending" detail={`${money(spent / (pace.today + 1))} a day on average`}>
+          <Card className={`gap-3 ${CARD}`}>
+            <SpendCalendar start={start} days={daily} lastDay={pace.today} pick={day} onPick={setDay} />
+            {day != null ? (
+              <View className="gap-0.5 border-t border-line pt-3">
+                <Text tone="default" weight="medium">
+                  {new Date(dayStart!).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}
+                </Text>
+                <Text variant="small" tabular>
+                  {daily[day].total > 0 ? `${money(daily[day].total)} spent · ${daily[day].count} ${daily[day].count === 1 ? 'entry' : 'entries'}` : 'Nothing spent'}
+                </Text>
+              </View>
+            ) : (
+              <Text variant="caption">Tap a day to see its entries</Text>
+            )}
+          </Card>
+          {day != null && dayRows && dayRows.length > 0 ? <TxnList rows={dayRows} /> : null}
+        </Block>
+      ) : null}
 
       {/* Where it went: every category, ranked. */}
       <Block title="Where it went" detail={shares.length ? `${shares.length} categories` : undefined}>
@@ -198,6 +235,67 @@ export default function Reports() {
           <Card className={CARD}>
             <CashFlowBars months={trend} />
           </Card>
+        </Block>
+      ) : null}
+
+      {/* Credit cards by billing cycle, not calendar month: what the next statement will hold. */}
+      {cardsDue && cardsDue.length > 0 ? (
+        <Block title="Card statements" action="Accounts" onAction={() => router.push('/accounts')}>
+          {cardsDue.map((c) => {
+            const name = `${c.name}${c.last4 ? ` ••${c.last4}` : ''}`;
+            if (!c.open)
+              return (
+                <Card key={c.id} padded={false} className="rounded-2xl px-3.5 py-1">
+                  <Row
+                    icon="card"
+                    title={name}
+                    subtitle="Add its statement day to see each billing cycle"
+                    onPress={() => router.push({ pathname: '/account-form', params: { id: c.id } })}
+                  />
+                </Card>
+              );
+            const fmt = (t: number) => new Date(t).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+            const lastDayOf = (end: number) => end - 86_400_000;
+            return (
+              <Card key={c.id} className={`gap-3 ${CARD}`}>
+                <View className="flex-row items-baseline justify-between gap-2">
+                  <Text tone="default" weight="medium" numberOfLines={1} className="min-w-0 flex-1">
+                    {name}
+                  </Text>
+                  <Text variant="caption">{`Statement ${fmt(c.open.statement)}`}</Text>
+                </View>
+                <View className="gap-0.5">
+                  <Amount size={22} weight="semibold">
+                    {money(c.open.total)}
+                  </Amount>
+                  <Text variant="small" tabular>
+                    {`${fmt(c.open.start)} – ${fmt(lastDayOf(c.open.end))} · ${c.open.count} ${c.open.count === 1 ? 'entry' : 'entries'} so far`}
+                  </Text>
+                </View>
+                {c.limit ? <BudgetBar used={c.open.total / c.limit} state={c.open.total > c.limit * 0.9 ? 'over' : c.open.total > c.limit * 0.7 ? 'near' : 'ok'} thin /> : null}
+                {c.open.top.length > 0 ? (
+                  <View className="flex-row flex-wrap gap-x-4 gap-y-1.5">
+                    {c.open.top.map((t) => (
+                      <View key={t.id ?? 'none'} className="flex-row items-center gap-1.5">
+                        <View className="h-2 w-2 rounded-full" style={{ backgroundColor: t.color }} />
+                        <Text variant="caption" tone="default">
+                          {t.name}
+                        </Text>
+                        <Text variant="caption" tabular>
+                          {money(t.total)}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+                {c.last ? (
+                  <Text variant="caption" tabular className="border-t border-line pt-2.5">
+                    {`Last statement ${money(c.last.total)} · ${fmt(c.last.start)} – ${fmt(lastDayOf(c.last.end))}`}
+                  </Text>
+                ) : null}
+              </Card>
+            );
+          })}
         </Block>
       ) : null}
 
