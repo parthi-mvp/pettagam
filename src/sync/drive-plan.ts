@@ -12,6 +12,12 @@ export type RemoteFile = { id: string; name: string; modifiedTime: string; appPr
 export const SNAPSHOT_PREFIX = 'pettagam-';
 export const LOG_PREFIX = 'log-';
 
+/**
+ * With "Encrypt my Drive backup" on: the salt and a check value for the sync password (never the key).
+ * Its name doesn't match a device file, so planning and the devices list ignore it.
+ */
+export const VAULT_FILE = 'pettagam-vault-key.json';
+
 export const snapshotName = (device: string) => `${SNAPSHOT_PREFIX}${device}.json`;
 export const logName = (device: string, seq: number) => `${LOG_PREFIX}${device}-${String(seq).padStart(8, '0')}.json`;
 

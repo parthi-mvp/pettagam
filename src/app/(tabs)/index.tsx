@@ -168,7 +168,9 @@ export default function Home() {
   const syncLabel =
     sync.state === 'off'
       ? 'Not backed up · set up Google Drive backup'
-      : sync.state === 'syncing'
+      : sync.state === 'locked'
+        ? 'Backup locked · enter your sync password'
+        : sync.state === 'syncing'
         ? 'Backing up…'
         : sync.state === 'offline'
           ? `Offline${sync.pending ? ` · ${sync.pending} to back up` : ''}`
@@ -180,7 +182,7 @@ export default function Home() {
       ? { bg: 'bg-fill', ink: fgMuted }
       : sync.state === 'error'
         ? { bg: 'bg-danger-soft', ink: danger }
-        : sync.state === 'offline'
+        : sync.state === 'offline' || sync.state === 'locked'
           ? { bg: 'bg-warning-soft', ink: warningFg }
           : sync.state === 'syncing'
             ? { bg: 'bg-primary-soft', ink: primary }

@@ -12,5 +12,6 @@ test('describeSyncError: offline is quiet, everything else is one plain sentence
   assert.ok(!/403|reason/.test(full.message ?? ''), 'no raw detail on screen');
   assert.match(describeSyncError('Google Drive 401: Invalid Credentials').message ?? '', /sign in again/);
   assert.match(describeSyncError('SIGN_IN_REQUIRED').message ?? '', /Reconnect/);
+  assert.match(describeSyncError('VAULT_LOCKED').message ?? '', /sync password/);
   assert.ok(describeSyncError('Something odd').message);
 });

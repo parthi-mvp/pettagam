@@ -9,6 +9,7 @@ const OFFLINE_RE = /network|fetch failed|failed to fetch|unknownhost|unable to r
  */
 export function describeSyncError(raw: string): { offline: boolean; message: string | null } {
   if (OFFLINE_RE.test(raw)) return { offline: true, message: null };
+  if (/VAULT_LOCKED/.test(raw)) return { offline: false, message: 'Your Drive backup is encrypted. Enter the sync password in Backup to keep syncing.' };
   if (/storageQuotaExceeded|quota/i.test(raw)) return { offline: false, message: 'Your Google Drive is full. Free up space to keep backing up.' };
   if (/\b401\b|sign.?in|SIGN_IN_REQUIRED|invalid_grant|token/i.test(raw))
     return { offline: false, message: 'Google needs you to sign in again. Reconnect Google Drive in Backup.' };

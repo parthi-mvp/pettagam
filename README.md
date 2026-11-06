@@ -106,6 +106,11 @@ How it works:
 - **Devices.** More → Backup lists the phones backing up to the account. Removing one deletes its files after this phone has taken in everything it wrote; phones unseen for 180 days are cleaned up automatically on the same terms.
 - **New phone.** Install, tap *Restore from Google Drive* on the welcome screen (or More → Backup) and connect the same account.
 - **Privacy.** The app folder is hidden and private to Pettagam; it can't see the user's other Drive files.
+- **Encryption (optional).** "Encrypt my Drive backup" makes it end-to-end: a sync password (scrypt → AES-256-GCM, `src/sync/vault.ts`), entered once per phone; the key stays in the phone's secure storage. A forgotten password can't be recovered; "Start afresh" deletes the Drive files and backs up again from one phone.
+
+### Backup file (no Google needed)
+
+More → Backup → **Save a backup file** writes the whole database, encrypted with a password you choose, and opens the share sheet (Files, a chat with yourself, email, USB). **Restore from a file** asks for the password, shows what the file holds, then merges it in field by field: newer edits on the phone stay, and restoring twice changes nothing.
 
 ## SMS auto-entry
 

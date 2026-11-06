@@ -1,18 +1,19 @@
+import * as Crypto from 'expo-crypto';
+import * as SecureStore from 'expo-secure-store';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { Platform } from 'react-native';
 
-import { deviceId, observeClock, stampFields } from '@/db/clock';
+import { deviceId } from '@/db/clock';
 import { emitChange } from '@/db/events';
-import { getSetting, setSetting, upsertRaw } from '@/db/repo';
+import { getSetting, setSetting } from '@/db/repo';
 import { SYNCED_TABLES } from '@/db/types';
 
-import { knownColumns, mergeRow, packClocks, unpackRow, type Clock, type PackedClocks, type Row } from './crdt';
+import { packClocks, type Clock, type Row } from './crdt';
 import * as Drive from './drive';
-import { groupDevices, KEEP_LOGS, logName, parseName, planPull, snapshotName, SNAPSHOT_EVERY, staleDevices, type DeviceInfo, type RemoteFile } from './drive-plan';
+import { groupDevices, KEEP_LOGS, logName, parseName, planPull, snapshotName, SNAPSHOT_EVERY, staleDevices, VAULT_FILE, type DeviceInfo, type RemoteFile } from './drive-plan';
 import { describeSyncError } from './errors';
-
-/** A backup file: a snapshot (every row) or a change file (only changed fields of changed rows), with each column's clock. */
-type Snapshot = { kind: 'snapshot' | 'changes'; exportedAt: number; deviceId: string; tables: Record<string, Row[]>; clocks: PackedClocks };
+import { buildSnapshot, mergeIn, type Snapshot } from './snapshot';
+import { deriveKey, fromBase64, isKeySealed, KDF, openWithKey, sealWithKey, toBase64, WrongPasswordError, type KeySealed } from './vault';
 
 /**
  * Backup and multi-device sync through the user's own Google Drive (hidden app folder), no server.
@@ -26,11 +27,18 @@ type Snapshot = { kind: 'snapshot' | 'changes'; exportedAt: number; deviceId: st
  * A sync asks Drive only for files changed since the last look, applies other phones' new change files
  * in order (their snapshot first when it has never seen the phone, or some files were cleaned up),
  * then uploads its own changes. Phones never write the same file, so no upload overwrites another.
+ *
+ * Optional end-to-end encryption ("Encrypt my Drive backup"): a sync password, entered once on each
+ * phone. VAULT_FILE holds its salt and a check value; the derived key stays in this phone's secure
+ * storage. Every file a phone writes is then AES-256-GCM encrypted (src/sync/vault.ts).
  */
 
 export type SyncStatus = {
   /** off = Google Drive not connected (data only on this phone). */
-  state: 'off' | 'idle' | 'syncing' | 'error' | 'offline';
+  /** locked = Drive backup is encrypted and this phone doesn't have the sync password yet. */
+  state: 'off' | 'idle' | 'syncing' | 'error' | 'offline' | 'locked';
+  /** "Encrypt my Drive backup" is on for this account. */
+  encrypted: boolean;
   /** Changes on this phone not backed up yet. */
   pending: number;
   lastSyncAt: number | null;
@@ -42,7 +50,7 @@ export type SyncStatus = {
   detail: string | null;
 };
 
-let status: SyncStatus = { state: 'off', pending: 0, lastSyncAt: null, account: null, error: null, detail: null };
+let status: SyncStatus = { state: 'off', encrypted: false, pending: 0, lastSyncAt: null, account: null, error: null, detail: null };
 const listeners = new Set<(s: SyncStatus) => void>();
 
 export const getSyncStatus = () => status;
@@ -80,53 +88,112 @@ const readJson = async <T,>(db: SQLiteDatabase, key: string, fallback: T): Promi
 };
 const writeJson = (db: SQLiteDatabase, key: string, v: unknown) => setSetting(db, key, JSON.stringify(v));
 
+// ---- Encryption ("Encrypt my Drive backup") ----
+
+const KEY_STORE = 'pettagam_drive_key';
+const VAULT_CHECK = 'pettagam-vault';
+const random = (n: number) => Crypto.getRandomBytes(n);
+type Vault = { salt: string; kdf: typeof KDF; check: KeySealed };
+
+class VaultLockedError extends Error {
+  constructor() {
+    super('VAULT_LOCKED');
+  }
+}
+
+const storedKey = async () => {
+  const k = await SecureStore.getItemAsync(KEY_STORE);
+  return k ? fromBase64(k) : null;
+};
+const vaultOn = async (db: SQLiteDatabase) => (await getSetting(db, 'drive_vault')) === '1';
+
+/** A downloaded file as plain data: decrypted when it's encrypted (locked without the key). */
+async function readFile(id: string): Promise<Snapshot | null> {
+  const raw = await Drive.download<unknown>(id);
+  if (raw == null || !isKeySealed(raw)) return raw as Snapshot | null;
+  const key = await storedKey();
+  if (!key) throw new VaultLockedError();
+  return JSON.parse(openWithKey(raw, key)) as Snapshot;
+}
+
+/** The text to upload: encrypted while encryption is on (never plain without the key). */
+async function fileBody(db: SQLiteDatabase, data: Snapshot): Promise<string> {
+  const json = JSON.stringify(data);
+  if (!(await vaultOn(db))) return json;
+  const key = await storedKey();
+  if (!key) throw new VaultLockedError();
+  return JSON.stringify(sealWithKey(json, key, random));
+}
+
+/**
+ * Write a full snapshot on the next sync; `purge` then removes ALL of this phone's change files (not
+ * just old ones), e.g. so plain ones don't stay once encryption is turned on.
+ */
+export async function requestSnapshot(db: SQLiteDatabase, purge = false) {
+  const own = await readJson<{ id: string; seq: number } | null>(db, 'drive_own_snapshot', null);
+  if (own) await writeJson(db, 'drive_own_snapshot', { ...own, seq: -SNAPSHOT_EVERY });
+  if (purge) await setSetting(db, 'drive_purge', '1');
+}
+
+/** Turn encryption on for this Google account with a new sync password. */
+export async function enableDriveEncryption(db: SQLiteDatabase, password: string) {
+  if (await Drive.findByName(VAULT_FILE)) throw new Error('VAULT_EXISTS');
+  const salt = random(16);
+  const key = await deriveKey(password, salt);
+  const vault: Vault = { salt: toBase64(salt), kdf: KDF, check: sealWithKey(VAULT_CHECK, key, random) };
+  await Drive.upload(VAULT_FILE, JSON.stringify(vault));
+  await SecureStore.setItemAsync(KEY_STORE, toBase64(key));
+  await setSetting(db, 'drive_vault', '1');
+  await requestSnapshot(db, true);
+  await syncNow(db);
+}
+
+/** On another phone: enter the sync password (WrongPasswordError if it doesn't match). */
+export async function unlockDriveEncryption(db: SQLiteDatabase, password: string) {
+  const f = await Drive.findByName(VAULT_FILE);
+  const vault = f ? await Drive.download<Vault>(f.id) : null;
+  if (!vault) throw new Error('VAULT_GONE');
+  const key = await deriveKey(password, fromBase64(vault.salt), vault.kdf);
+  if (openWithKey(vault.check, key) !== VAULT_CHECK) throw new WrongPasswordError();
+  await SecureStore.setItemAsync(KEY_STORE, toBase64(key));
+  await setSetting(db, 'drive_vault', '1');
+  await requestSnapshot(db, true);
+  await syncNow(db);
+}
+
+/** Turn encryption off for the account: this phone rewrites its files plain; the others follow. */
+export async function disableDriveEncryption(db: SQLiteDatabase) {
+  const f = await Drive.findByName(VAULT_FILE);
+  if (f) await Drive.remove(f.id);
+  await setSetting(db, 'drive_vault', null);
+  await requestSnapshot(db, true);
+  await syncNow(db);
+}
+
+/**
+ * Forgot the sync password: delete every Pettagam file in this Drive and back up afresh from this
+ * phone (unencrypted). Other phones keep their own data and back up again once they sync.
+ */
+export async function resetDriveBackup(db: SQLiteDatabase) {
+  for (const f of await Drive.listFiles()) await Drive.remove(f.id);
+  const v = await Drive.findByName(VAULT_FILE);
+  if (v) await Drive.remove(v.id);
+  await SecureStore.deleteItemAsync(KEY_STORE);
+  await db.runAsync("DELETE FROM settings WHERE key IN ('drive_applied', 'drive_listed_until', 'drive_own_snapshot', 'drive_vault', 'drive_purge')");
+  setStatus({ encrypted: false });
+  await syncNow(db);
+}
+
 /** Load the stored account, last backup time and pending count into the status (on start, after edits). */
 export async function refreshPending(db: SQLiteDatabase) {
-  const [account, last, pending] = await Promise.all([getSetting(db, 'drive_account'), getSetting(db, 'last_sync_at'), pendingCount(db)]);
+  const [account, last, pending, encrypted] = await Promise.all([getSetting(db, 'drive_account'), getSetting(db, 'last_sync_at'), pendingCount(db), vaultOn(db)]);
   setStatus({
     account,
+    encrypted,
     pending,
     lastSyncAt: last ? Number(last) : null,
     ...(status.state === 'syncing' ? {} : { state: account ? (status.state === 'off' ? 'idle' : status.state) : 'off' }),
   });
-}
-
-/** Merge another phone's snapshot in, field by field. Returns how many rows changed here. */
-async function mergeIn(db: SQLiteDatabase, snap: Snapshot) {
-  let changed = 0;
-  let newest: Clock | null = null;
-  await db.withExclusiveTransactionAsync(async (txn) => {
-    for (const table of SYNCED_TABLES) {
-      const remoteRows = snap.tables[table];
-      if (!remoteRows?.length) continue;
-      const localRows = new Map((await txn.getAllAsync<Row>(`SELECT * FROM ${table}`)).map((r) => [r.id, r]));
-      const columns = new Set((await txn.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`)).map((c) => c.name));
-      const localClocks = new Map<string, Record<string, Clock>>();
-      for (const c of await txn.getAllAsync<{ row_id: string; col: string; hlc: Clock }>('SELECT row_id, col, hlc FROM field_clock WHERE tbl = ?', [table])) {
-        (localClocks.get(c.row_id) ?? localClocks.set(c.row_id, {}).get(c.row_id)!)[c.col] = c.hlc;
-      }
-      for (const sent of remoteRows) {
-        const remote = knownColumns(sent, columns);
-        const local = localRows.get(remote.id);
-        // A change file edits an entry this phone has never had whole (its snapshot normally brings it): skip.
-        if (!local && !('created_at' in remote)) continue;
-        const m = mergeRow(local ? { row: local, clocks: localClocks.get(remote.id) ?? {} } : null, {
-          row: remote,
-          clocks: unpackRow(snap.clocks, table, remote),
-        });
-        if (!m) continue;
-        // A new row goes in whole; an existing one gets only the columns that won.
-        await upsertRaw(txn, table, local ? { ...local, ...m.patch } : { ...remote, ...m.patch });
-        for (const [col, c] of Object.entries(m.clocks)) {
-          await stampFields(txn, table, remote.id, [col], c);
-          if (!newest || c > newest) newest = c;
-        }
-        changed++;
-      }
-    }
-  });
-  if (newest) await observeClock(db, newest);
-  return changed;
 }
 
 let running: Promise<void> | null = null;
@@ -149,6 +216,13 @@ async function run(db: SQLiteDatabase) {
   setStatus({ state: 'syncing', account, error: null, detail: null });
   try {
     const me = await deviceId(db);
+    // Encryption turned on or off from another phone? (One small lookup; keeps every phone in step.)
+    const vault = !!(await Drive.findByName(VAULT_FILE));
+    if (vault !== (await vaultOn(db))) {
+      await setSetting(db, 'drive_vault', vault ? '1' : null);
+      if (!vault || (await storedKey())) await requestSnapshot(db, true);
+    }
+    setStatus({ encrypted: vault });
     const merged = await pull(db, me);
     if (merged) emitChange('*');
     await push(db, me);
@@ -158,7 +232,8 @@ async function run(db: SQLiteDatabase) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const { offline, message } = describeSyncError(msg);
-    setStatus({ state: offline ? 'offline' : 'error', error: message, detail: offline ? null : msg, pending: await pendingCount(db) });
+    const state = e instanceof VaultLockedError ? 'locked' : offline ? 'offline' : 'error';
+    setStatus({ state, error: message, detail: offline ? null : msg, pending: await pendingCount(db) });
     throw e;
   }
 }
@@ -173,7 +248,7 @@ async function pull(db: SQLiteDatabase, me: string) {
 
   const mergeSnapshot = async (device: string, file: RemoteFile | null) => {
     const f = file ?? (await Drive.findByName(snapshotName(device)));
-    const snap = f ? await Drive.download<Snapshot>(f.id) : null;
+    const snap = f ? await readFile(f.id) : null;
     if (!f || !snap) return;
     merged += await mergeIn(db, snap);
     const p = parseName(f);
@@ -185,7 +260,7 @@ async function pull(db: SQLiteDatabase, me: string) {
       await mergeSnapshot(a.device, a.file);
     } else {
       if (applied[a.device] != null && a.seq <= applied[a.device]) continue; // the snapshot already had it
-      const log = await Drive.download<Snapshot>(a.file.id);
+      const log = await readFile(a.file.id);
       // Gone: that phone cleaned it up after a snapshot, which holds it instead.
       if (!log) await mergeSnapshot(a.device, null);
       else {
@@ -232,7 +307,7 @@ async function push(db: SQLiteDatabase, me: string) {
     }
     seq += 1;
     const body: Snapshot = { kind: 'changes', exportedAt: Date.now(), deviceId: me, tables, clocks: packClocks(changed) };
-    await Drive.upload(logName(me, seq), JSON.stringify(body), undefined, { name: deviceName() });
+    await Drive.upload(logName(me, seq), await fileBody(db, body), undefined, { name: deviceName() });
     // Saved straight away: a crash after the upload must not reuse this seq for different changes.
     await setSetting(db, 'drive_own_seq', String(seq));
     await setSetting(db, 'drive_up_clock', changed[changed.length - 1].hlc);
@@ -240,28 +315,28 @@ async function push(db: SQLiteDatabase, me: string) {
 
   // 2. A full snapshot: the first time, then every 50 change files.
   if (own && seq - own.seq < SNAPSHOT_EVERY) return;
-  const tables: Record<string, Row[]> = {};
-  for (const t of SYNCED_TABLES) tables[t] = await db.getAllAsync<Row>(`SELECT * FROM ${t}`);
-  const clocks = packClocks(await db.getAllAsync<{ tbl: string; row_id: string; col: string; hlc: Clock }>('SELECT tbl, row_id, col, hlc FROM field_clock'));
-  const snap: Snapshot = { kind: 'snapshot', exportedAt: Date.now(), deviceId: me, tables, clocks };
+  const snap = await buildSnapshot(db, me);
   // shortcut: the snapshot is the whole database (fine to a few MB, ~10k entries); it's only written every 50 change files.
   const props = { seq: String(seq), name: deviceName() };
+  const body = await fileBody(db, snap);
   const existing = own?.id ?? (await Drive.findByName(snapshotName(me)))?.id;
-  const file = await Drive.upload(snapshotName(me), JSON.stringify(snap), existing, props).catch((e) => {
+  const file = await Drive.upload(snapshotName(me), body, existing, props).catch((e) => {
     // Removed from another phone's devices list: write it afresh.
-    if (existing && /Google Drive 404/.test(String(e))) return Drive.upload(snapshotName(me), JSON.stringify(snap), undefined, props);
+    if (existing && /Google Drive 404/.test(String(e))) return Drive.upload(snapshotName(me), body, undefined, props);
     throw e;
   });
   own = { id: file.id, seq };
   await writeJson(db, 'drive_own_snapshot', own);
 
   // 3. Clean up: change files the snapshot holds, except the newest few (phones that are only a little
-  // behind keep reading small files instead of the whole snapshot).
+  // behind keep reading small files instead of the whole snapshot); all of them after an encryption change.
+  const keep = (await getSetting(db, 'drive_purge')) === '1' ? 0 : KEEP_LOGS;
   const all = await Drive.listFiles();
   for (const f of all) {
     const p = parseName(f);
-    if (p?.kind === 'log' && p.device === me && p.seq <= seq - KEEP_LOGS) await Drive.remove(f.id);
+    if (p?.kind === 'log' && p.device === me && p.seq <= seq - keep) await Drive.remove(f.id);
   }
+  await setSetting(db, 'drive_purge', null);
   // And phones gone for months (a reinstall, a sold phone) whose every change is already here.
   const applied = await readJson<Record<string, number>>(db, 'drive_applied', {});
   for (const d of staleDevices(groupDevices(all), me, applied, Date.now())) for (const f of d.files) await Drive.remove(f.id);
@@ -281,8 +356,7 @@ export async function removeDevice(db: SQLiteDatabase, device: string) {
   await syncNow(db);
   // A fresh snapshot of this phone first: its change files hold only its own edits, while the snapshot
   // holds everything merged here, so phones that never read the removed phone's files still get them.
-  const own = await readJson<{ id: string; seq: number } | null>(db, 'drive_own_snapshot', null);
-  if (own) await writeJson(db, 'drive_own_snapshot', { ...own, seq: -SNAPSHOT_EVERY });
+  await requestSnapshot(db);
   await syncNow(db);
   const { devices } = await listDevices(db);
   for (const f of devices.find((d) => d.device === device)?.files ?? []) await Drive.remove(f.id);
@@ -305,9 +379,10 @@ export async function connectDrive(db: SQLiteDatabase): Promise<string | null> {
 export async function disconnectDrive(db: SQLiteDatabase) {
   await Drive.signOut();
   await setSetting(db, 'drive_account', null);
+  await SecureStore.deleteItemAsync(KEY_STORE);
   // What was read from this account. Kept: drive_own_seq, so this phone's next change file never reuses a number.
   await db.runAsync(
-    "DELETE FROM settings WHERE key IN ('drive_applied', 'drive_listed_until', 'drive_own_snapshot')"
+    "DELETE FROM settings WHERE key IN ('drive_applied', 'drive_listed_until', 'drive_own_snapshot', 'drive_vault', 'drive_purge')"
   );
-  setStatus({ state: 'off', account: null, error: null, detail: null });
+  setStatus({ state: 'off', encrypted: false, account: null, error: null, detail: null });
 }

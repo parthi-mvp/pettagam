@@ -2,6 +2,7 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, View } from 'react-native';
 
+import { BackupFileSection, DriveEncryptionSection } from '@/components/backup-sections';
 import { Icon } from '@/components/icons';
 import { Button, Divider, FormSection, Screen, Text } from '@/components/ui';
 import { toast } from 'sonner-native';
@@ -81,13 +82,13 @@ export default function BackupSettings() {
         <FormSection card title="Google Drive backup">
           <View className="flex-row items-center gap-2.5">
             <Icon
-              name={sync.state === 'error' || sync.state === 'offline' ? 'ms:cloud_off' : 'ms:cloud_done'}
+              name={sync.state === 'error' || sync.state === 'offline' || sync.state === 'locked' ? 'ms:cloud_off' : 'ms:cloud_done'}
               size={20}
-              color={sync.state === 'error' || sync.state === 'offline' ? warning : success}
+              color={sync.state === 'error' || sync.state === 'offline' || sync.state === 'locked' ? warning : success}
             />
             <View className="min-w-0 flex-1">
               <Text tone="default" weight="medium">
-                {sync.state === 'syncing' ? 'Backing up…' : sync.state === 'offline' ? 'Offline' : sync.state === 'error' ? 'Backup problem' : `Backed up ${ago(sync.lastSyncAt)}`}
+                {sync.state === 'syncing' ? 'Backing up…' : sync.state === 'offline' ? 'Offline' : sync.state === 'error' ? 'Backup problem' : sync.state === 'locked' ? 'Locked · enter your sync password below' : `Backed up ${ago(sync.lastSyncAt)}`}
               </Text>
               <Text variant="caption" numberOfLines={1}>
                 {sync.account}
@@ -121,7 +122,11 @@ export default function BackupSettings() {
         </FormSection>
       )}
 
+      {on ? <DriveEncryptionSection sync={sync} /> : null}
+
       {on ? <Devices lastSyncAt={sync.lastSyncAt} /> : null}
+
+      <BackupFileSection />
 
       <FormSection card title="What Pettagam can see in your Drive">
         <Text variant="small">

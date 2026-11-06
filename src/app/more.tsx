@@ -13,7 +13,7 @@ import { LOCK_AFTER, useAppLock } from '@/security/app-lock';
 import { useThemePreference } from '@/theme/themePreference';
 
 const MODE_LABEL = { system: 'System', light: 'Light', dark: 'Dark' } as const;
-const SYNC_LABEL: Record<SyncStatus['state'], string> = { off: 'Off · only on this phone', idle: 'Google Drive', syncing: 'Backing up…', offline: 'Offline', error: 'Backup problem' };
+const SYNC_LABEL: Record<SyncStatus['state'], string> = { off: 'Off · only on this phone', idle: 'Google Drive', syncing: 'Backing up…', offline: 'Offline', error: 'Backup problem', locked: 'Locked · enter your sync password' };
 
 /** A captioned group of rows, iOS-settings style: small label above one card. */
 function Group({ title, children }: { title: string; children: ReactNode }) {
