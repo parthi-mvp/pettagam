@@ -10,7 +10,7 @@ import { monthRange } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
 import { useThemeColor } from '@/theme/useThemeColor';
 
-import { Icon, type IconName } from '../icons';
+import { Icon, isExtraIcon, type AnyIcon } from '../icons';
 import { HeroBackdrop } from './HeroBackdrop';
 import { PressableScale } from './PressableScale';
 import { Text } from './Text';
@@ -202,8 +202,20 @@ export function Card({ children, className, variant, padded, onPress, ...props }
   );
 }
 
-/** A titled group of form fields: optional section title over one card. */
-export function FormSection({ title, children }: { title?: string; children: ReactNode }) {
+/**
+ * A titled group of form fields. Flat by default: the fields sit straight on the page (they carry their
+ * own surface and border), with room above each section. `card` puts the group on a card instead, for
+ * settings pages whose rows (switches, options) have no surface of their own.
+ */
+export function FormSection({ title, children, card = false }: { title?: string; children: ReactNode; card?: boolean }) {
+  if (!card) {
+    return (
+      <View className="gap-3 pt-3">
+        {title ? <GroupLabel>{title}</GroupLabel> : null}
+        {children}
+      </View>
+    );
+  }
   return (
     <View className="gap-1.5">
       {title ? <GroupLabel>{title}</GroupLabel> : null}
@@ -254,13 +266,14 @@ export function Empty({ text, action }: { text: string; action?: ReactNode }) {
 
 /** 44px tinted tile holding a 22px line icon (list rows, dues, the SMS card). */
 /** Icon on a soft square. `color` (a category's own colour) overrides the tone: icon in it, tile a 13% tint. */
-export function IconTile({ icon, tone = 'vault', color, size = 36 }: { icon: IconName; tone?: 'vault' | 'brass'; color?: string; size?: number }) {
+export function IconTile({ icon, tone = 'vault', color, size = 36 }: { icon: AnyIcon; tone?: 'vault' | 'brass'; color?: string; size?: number }) {
   const ink = useThemeColor(tone === 'brass' ? 'brass-fg' : 'primary');
   return (
     <View
       className={cn('items-center justify-center', !color && (tone === 'brass' ? 'bg-brass-soft' : 'bg-primary-soft'))}
       style={{ width: size, height: size, borderRadius: size * 0.28, backgroundColor: color ? `${color}22` : undefined }}>
-      <Icon name={icon} size={Math.round(size * 0.47)} color={color ?? ink} />
+      {/* Category icons (Material Symbols, emoji) sit a step bigger: their glyphs carry their own padding. */}
+      <Icon name={icon} size={Math.round(size * (isExtraIcon(icon) ? 0.58 : 0.47))} color={color ?? ink} />
     </View>
   );
 }

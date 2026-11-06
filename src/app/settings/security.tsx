@@ -40,7 +40,7 @@ export default function SecuritySettings() {
 
   return (
     <Screen>
-      <FormSection>
+      <FormSection card>
         <SwitchRow
           title={`Lock with ${method}`}
           description="Pettagam asks for it when you open the app. Your phone PIN works as a backup."
@@ -50,7 +50,7 @@ export default function SecuritySettings() {
       </FormSection>
 
       {lock.enabled ? (
-        <FormSection title="Lock after">
+        <FormSection card title="Lock after">
           <Chips<string>
             options={LOCK_AFTER.map((o) => ({ value: String(o.value), label: o.label }))}
             value={String(lock.lockAfter)}

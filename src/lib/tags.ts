@@ -64,3 +64,60 @@ export function mergeHints(history: string[], rules: string[], picked: string[],
   for (const t of [...history, ...rules]) if (!hasTag(out, t) && !hasTag(picked, t)) out.push(t);
   return out.slice(0, max);
 }
+
+/** Edit distance (insert, delete, swap a letter), case-insensitive. Small strings only. */
+function distance(a: string, b: string): number {
+  const prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let diag = prev[0];
+    prev[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = prev[j];
+      prev[j] = Math.min(prev[j] + 1, prev[j - 1] + 1, diag + (a[i - 1] === b[j - 1] ? 0 : 1));
+      diag = tmp;
+    }
+  }
+  return prev[b.length];
+}
+
+/** Typos forgiven for a typed length: none for short words, one from 4 letters, two from 8. */
+const slack = (n: number) => (n >= 8 ? 2 : n >= 4 ? 1 : 0);
+
+/**
+ * Tags matching what's being typed, best first: starts with it, then a word starts with it, then
+ * contains it, then a near miss ("goa trp" → "Goa trip"). Others are left out.
+ */
+export function rankTagMatches(query: string, tags: string[]): string[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return tags;
+  const scored: { tag: string; score: number; i: number }[] = [];
+  tags.forEach((tag, i) => {
+    const t = tag.toLowerCase();
+    const score = t.startsWith(q)
+      ? 0
+      : t.split(/\s+/).some((w) => w.startsWith(q))
+        ? 1
+        : t.includes(q)
+          ? 2
+          : distance(q, t.slice(0, q.length + 1)) <= slack(q.length) || distance(q, t) <= slack(q.length)
+            ? 3
+            : -1;
+    if (score >= 0) scored.push({ tag, score, i });
+  });
+  return scored.sort((a, b) => a.score - b.score || a.i - b.i).map((s) => s.tag);
+}
+
+/** An existing tag that a new one is really a copy of: same letters in another case, or a near miss. */
+export function closeTag(input: string, tags: string[]): string | null {
+  const q = input.trim().toLowerCase();
+  if (!q) return null;
+  const exact = tags.find((t) => t.toLowerCase() === q);
+  if (exact) return exact;
+  let best: string | null = null;
+  let bestD = slack(q.length) + 1;
+  for (const t of tags) {
+    const d = distance(q, t.toLowerCase());
+    if (d < bestD) [best, bestD] = [t, d];
+  }
+  return best;
+}

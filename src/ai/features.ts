@@ -10,7 +10,9 @@ import { categoryBreakdown, insights, monthlyTrend, netWorth, topMerchants } fro
 import { redactSms } from '@/sms/parser';
 
 import { chat, useAi } from './client';
-import { matchName, readAiDraft, readAiPicks, readAiSms, readAiSuggestion, type AiDraft, type AiSmsItem, type Kind } from './parse';
+import { cleanTag } from '@/lib/tags';
+
+import { matchName, readAiDraft, readAiPicks, readAiSms, readAiSuggestion, readJson, type AiDraft, type AiSmsItem, type Kind } from './parse';
 
 type Cat = { name: string; kind: Kind };
 
@@ -70,6 +72,35 @@ export async function aiSuggestCategoryAndTags(text: string, kind: Kind, names: 
     { json: true }
   );
   return readAiSuggestion(reply, names, tags);
+}
+
+/**
+ * The user is typing a tag: up to 3 tags that fit both what they typed and this entry. Existing tags
+ * come back in their own spelling; new ones are short and cleaned. The entry text is redacted first.
+ */
+export async function aiCompleteTag(typed: string, entryText: string, tags: string[]): Promise<string[]> {
+  const reply = await chat(
+    [
+      {
+        role: 'system',
+        content:
+          'Tags label Indian personal-finance entries by purpose or event across categories (a trip, office claims, a wedding). ' +
+          `The user is typing a tag for the entry below. Their existing tags: ${tags.join(', ') || '(none)'}. ` +
+          'Suggest up to 3 tags related to what they typed that fit this entry: an existing one when it fits (exact spelling), ' +
+          'else a new one of 1-3 words in Title Case. Reply only with JSON: {"tags": [..]}',
+      },
+      { role: 'user', content: `Typed: ${typed}\nEntry: ${redactSms(entryText) || '(no details)'}` },
+    ],
+    { json: true }
+  );
+  const j = readJson(reply);
+  const raw: unknown[] = Array.isArray(j?.tags) ? j.tags : [];
+  const out: string[] = [];
+  for (const t of raw) {
+    const name = typeof t === 'string' ? (matchName(t, tags) ?? cleanTag(t)) : null;
+    if (name && !out.some((o) => o.toLowerCase() === name.toLowerCase())) out.push(name);
+  }
+  return out.slice(0, 3);
 }
 
 const rupees = (n: number) => Math.round(n);

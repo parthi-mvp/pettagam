@@ -96,7 +96,7 @@ export default function BudgetForm() {
             <Text variant="heading">{targetName}</Text>
           </View>
         ) : (
-          <CategoryPicker label="Budget for" options={options} value={target} onChange={setTarget} />
+          <CategoryPicker label="Budget for" options={options} value={target} onChange={setTarget} createKind="expense" />
         )}
       </FormSection>
 

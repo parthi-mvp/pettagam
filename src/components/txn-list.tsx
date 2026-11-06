@@ -6,6 +6,7 @@ import type { TxnRow } from '@/db/repo';
 import { useTheme } from '@/hooks/use-theme';
 import { dayLabel, moneyExact, tidyName } from '@/lib/format';
 import { parseTags } from '@/lib/tags';
+import { viaLabel } from '@/sms/parser';
 
 import { categoryIcon } from './icons';
 import { Card, Divider, Row, Text } from './ui';
@@ -58,7 +59,9 @@ function TxnRowItem({ r }: { r: TxnRow }) {
     : tidyName(r.merchant ?? r.category_name ?? (r.type === 'income' ? 'Income' : 'Expense'));
   // Category first (what it was), then where it was paid from; the day heading carries the date.
   const tags = parseTags(r.tags).map((t) => `#${t}`);
-  const subtitle = [transfer ? 'Transfer' : (r.category_name ?? 'Uncategorised'), transfer ? null : r.account_name, ...tags].filter(Boolean).join(' · ');
+  // How it was paid (UPI, Card, NEFT…), when the SMS said so.
+  const via = viaLabel(r.via);
+  const subtitle = [transfer ? 'Transfer' : (r.category_name ?? 'Uncategorised'), transfer ? null : r.account_name, via, ...tags].filter(Boolean).join(' · ');
   return (
     <Row
       icon={categoryIcon(r.category_name, r.type, r.category_icon)}

@@ -365,11 +365,7 @@ export default function SmsImport() {
         scrollable
         title={current ? (current.merchant ?? (current.type === 'income' ? 'Money received' : 'Payment')) : ''}
         subtitle={current ? `${money(current.amount, true)} · ${dateLabel(current.sms.date)}` : undefined}
-        footer={
-          <View className="px-5 pb-6 pt-2">
-            <Button title="Done" onPress={() => sheet.current?.dismiss()} />
-          </View>
-        }>
+        footer={<Button title="Done" onPress={() => sheet.current?.dismiss()} />}>
         {current ? (
           <View className="gap-4">
             <SegmentedControl<Kind>
@@ -383,6 +379,7 @@ export default function SmsImport() {
                 update(current.hash, v === 'atm' ? { atm: true, type: 'expense', categoryId: null } : { atm: false, type: v, categoryId: v === current.type ? current.categoryId : null })
               }
             />
+            {current.cardPayment ? <Text variant="caption">Card bill payment · saved as a transfer from your bank to this card, not as income</Text> : null}
             <View className="gap-2">
               <View className="flex-row items-baseline justify-between px-0.5">
                 <Text variant="eyebrow">Account</Text>
@@ -403,6 +400,7 @@ export default function SmsImport() {
                     haptic.selection();
                     update(current.hash, { categoryId: v });
                   }}
+                  createKind={current.type}
                 />
               </View>
             )}

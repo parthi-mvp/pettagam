@@ -4,7 +4,7 @@ import { Pressable, View } from 'react-native';
 
 import { Icon } from '@/components/icons';
 import { TxnList } from '@/components/txn-list';
-import { Button, Card, Empty, Header, MonthSwitcher, Screen, SegmentedControl, Stat, TextInput } from '@/components/ui';
+import { Button, Card, Empty, FIELD_SURFACE, Header, MonthSwitcher, Screen, SegmentedControl, Stat, TextInput } from '@/components/ui';
 import { useLiveQuery } from '@/db/events';
 import { listTransactions } from '@/db/repo';
 import type { TxnType } from '@/db/types';
@@ -51,7 +51,7 @@ export default function Activity() {
       </Card>
 
       <View className="gap-2">
-        <View className="h-10 flex-row items-center gap-2 rounded-input bg-fill px-3">
+        <View className={`h-10 flex-row items-center gap-2 rounded-input border px-3 ${FIELD_SURFACE}`}>
           <Icon name="search" size={17} color={t.textSecondary} />
           <TextInput
             value={search}

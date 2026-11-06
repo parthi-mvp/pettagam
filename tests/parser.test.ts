@@ -105,3 +105,26 @@ test('ATM alert by debit card: digits come from the card', () => {
   assert.equal(r.last4, '5678');
   assert.equal(r.instrument, 'card');
 });
+
+test('Credit card bill payments are recognised (both HDFC wordings), spends and refunds are not', () => {
+  const sms = (body: string) => parseSms({ address: 'HDFCBK', date: 1, body });
+  const a = sms('DEAR HDFCBANK CARDMEMBER, PAYMENT OF Rs. 341517.00 RECEIVED TOWARDS YOUR CREDIT CARD ENDING WITH 5267 ON 31-10-2026');
+  assert.equal(a?.type, 'income');
+  assert.equal(a?.cardPayment, true);
+  assert.equal(a?.categoryHint, null);
+  assert.equal(sms('HDFC Bank Cardmember, Payment of Rs 341517 was credited to your card ending 5267 on 31/OCT/2026.')?.cardPayment, true);
+  assert.equal(sms('HDFC Bank Cardmember, Online Payment of Rs.73820 vide Ref# 2741032131VFJVZ was credited to your card ending 5267')?.cardPayment, true);
+  assert.equal(sms('Spent Rs.8440.77 On HDFC Bank Card 5267 At ANTHROPIC* CLAUDE SUB On 2026-11-03')?.cardPayment, false);
+  assert.equal(sms('Alert! Rs. 75.97 refunded by ZOMATO GURGAON IND on 30/AUG/2026 & adjusted against HDFC Bank Credit Card 5267')?.cardPayment, false);
+});
+
+test('paymentMethod: how the money moved', () => {
+  const via = (body: string) => parseSms({ address: 'HDFCBK', date: 1, body })?.via;
+  assert.equal(via('Rs.500 debited from A/c XX9642 on 03-11-26 to VPA kanaga@okaxis (UPI Ref 123456789012)'), 'upi');
+  assert.equal(via('Spent Rs.8440.77 On HDFC Bank Card 5267 At ANTHROPIC* CLAUDE SUB On 2026-11-03'), 'card');
+  assert.equal(via('Rs.2,000.00 withdrawn at ATM from A/c XX9642 on 03-11-26 at MG ROAD'), 'atm');
+  assert.equal(via('Your A/c XX9642 is credited with INR 65,000.00 on 03-11-26 by NEFT from ACME (SALARY)'), 'transfer');
+  assert.equal(via('Rs 5,000 debited from A/c XX9642 via IMPS to RAVI ref 1234'), 'transfer');
+  assert.equal(via('Rs 1,200 debited from A/c XX9642 towards NACH mandate for HDFC LIFE'), 'autopay');
+  assert.equal(via('Rs 300 debited from A/c XX9642 on 03-11-26'), null);
+});

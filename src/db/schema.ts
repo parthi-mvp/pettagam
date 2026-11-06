@@ -89,6 +89,10 @@ const MIGRATIONS: string[] = [
   `CREATE INDEX idx_txn_to_account ON transactions(to_account_id);`,
   // v7 — tags: a JSON array of labels that cut across categories (src/lib/tags.ts). Needs neon/migrations/0007.
   `ALTER TABLE transactions ADD COLUMN tags TEXT;`,
+  // v8 — how the money moved, read from the SMS (upi, card, neft…; src/sms/parser.ts). Needs neon/migrations/0008.
+  `ALTER TABLE transactions ADD COLUMN via TEXT;`,
+  // v9 — a card's network (visa, mastercard, rupay…; src/catalog/networks.ts). Also in neon/migrations/0008.
+  `ALTER TABLE accounts ADD COLUMN network TEXT;`,
 ];
 
 // Fixed ids so seeded categories are identical on every device and merge cleanly on sync.

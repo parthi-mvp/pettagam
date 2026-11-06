@@ -14,7 +14,6 @@ const TABS: { name: string; label: string; icon: IconName }[] = [
   { name: 'index', label: 'Home', icon: 'home' },
   { name: 'transactions', label: 'Activity', icon: 'list' },
   { name: 'investments', label: 'Invest', icon: 'trend' },
-  { name: 'more', label: 'More', icon: 'more' },
 ];
 type TabBarProps = Parameters<NonNullable<ComponentProps<typeof Tabs>['tabBar']>>[0];
 
@@ -52,6 +51,19 @@ function TabBar({ state, navigateToTab }: TabBarProps) {
         {items.slice(0, 2).map(tab)}
         <View className="w-[76px]" />
         {items.slice(2).map(tab)}
+        {/* More isn't a tab: it opens as its own page (back button, no tab bar). */}
+        <PressableScale
+          accessibilityRole="button"
+          accessibilityLabel="More"
+          scaleTo={0.94}
+          haptic="selection"
+          onPress={() => router.push('/more')}
+          className="flex-1 items-center justify-center gap-1 py-2">
+          <Icon name="more" size={22} color={muted} strokeWidth={1.7} />
+          <Text variant="caption" tone="muted">
+            More
+          </Text>
+        </PressableScale>
       </View>
       {/* Raised add button: a thick canvas-coloured ring fakes the notch cut out of the bar. */}
       <View className="absolute inset-x-0 -top-6 items-center" pointerEvents="box-none">

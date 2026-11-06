@@ -1,10 +1,9 @@
 import type { ReactNode } from 'react';
 import { Pressable, View } from 'react-native';
 
-import { cn } from '@/lib/cn';
 import { useThemeColor } from '@/theme/useThemeColor';
 
-import { Icon, type IconName } from '../icons';
+import { Icon, type AnyIcon } from '../icons';
 import { IconTile } from './Layout';
 import { Amount, Text } from './Text';
 
@@ -33,7 +32,7 @@ export function Row({
   rightSubColor?: string;
   onPress?: () => void;
   dot?: string | null;
-  icon?: IconName;
+  icon?: AnyIcon;
   iconTone?: 'vault' | 'brass';
   /** A category's own colour for the icon tile. */
   iconColor?: string;
@@ -91,44 +90,6 @@ export function ShareBar({ label, value, max, color, right }: { label: string; v
       <View className="h-1.5 overflow-hidden rounded-full bg-fill">
         <View className="h-full rounded-full" style={{ width: `${w}%`, backgroundColor: color }} />
       </View>
-    </View>
-  );
-}
-
-/** Grouped vertical bars: income vs expense per month. */
-export function MonthBars({ data }: { data: { label: string; income: number; expense: number }[] }) {
-  const max = Math.max(1, ...data.flatMap((d) => [d.income, d.expense]));
-  const H = 140;
-  return (
-    <View className="gap-2">
-      <View className="flex-row items-end gap-2" style={{ height: H }}>
-        {data.map((d) => (
-          <View key={d.label} className="flex-1 flex-row items-end justify-center gap-[3px]">
-            <View className="w-2.5 rounded-[3px] bg-success" style={{ height: Math.max(2, (d.income / max) * H) }} />
-            <View className="w-2.5 rounded-[3px] bg-danger" style={{ height: Math.max(2, (d.expense / max) * H) }} />
-          </View>
-        ))}
-      </View>
-      <View className="flex-row gap-2">
-        {data.map((d) => (
-          <Text key={d.label} variant="small" className="flex-1 text-center text-xs">
-            {d.label}
-          </Text>
-        ))}
-      </View>
-      <View className="flex-row justify-center gap-4">
-        <Legend className="bg-success" label="Income (+)" />
-        <Legend className="bg-danger" label="Expense (−)" />
-      </View>
-    </View>
-  );
-}
-
-function Legend({ className, label }: { className: string; label: string }) {
-  return (
-    <View className="flex-row items-center gap-1.5">
-      <View className={cn('h-2.5 w-2.5 rounded-[2px]', className)} />
-      <Text variant="small">{label}</Text>
     </View>
   );
 }

@@ -28,5 +28,6 @@ export async function ensureCashAccount(db: SQLiteDatabase, need = true): Promis
     credit_limit: null,
     billing_day: null,
     notes: null,
+    network: null,
   });
 }

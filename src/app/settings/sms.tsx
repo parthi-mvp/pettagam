@@ -48,7 +48,7 @@ export default function SmsAlertsSettings() {
 
   return (
     <Screen>
-      <FormSection title="New bank SMS">
+      <FormSection card title="New bank SMS">
         <SwitchRow
           title="Pop up new bank SMS"
           description="When a bank, card or UPI alert arrives, a card opens over the app you’re in with the amount, account and category filled in. Save in one tap."
@@ -58,7 +58,7 @@ export default function SmsAlertsSettings() {
       </FormSection>
 
       {on ? (
-        <FormSection title="Show over other apps">
+        <FormSection card title="Show over other apps">
           <View className="flex-row items-center gap-2.5">
             <Icon name={overlay ? 'check' : 'bulb'} size={18} color={overlay ? success : warning} strokeWidth={2.4} />
             <Text weight="medium" className="flex-1">{overlay ? 'Allowed' : 'Not allowed yet'}</Text>

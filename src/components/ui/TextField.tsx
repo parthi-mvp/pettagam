@@ -7,15 +7,20 @@ import { useThemeColor } from '@/theme/useThemeColor';
 import { Text } from './Text';
 import { TextInput, type AppTextInputProps } from './TextInput';
 
+/**
+ * The look of every input-like box (fields, date, pickers, search). Light mode: white with a hairline
+ * border and a soft shadow, so it stands out from the canvas. Dark mode keeps the flat filled box.
+ */
+export const FIELD_SURFACE = 'border-line bg-surface shadow-card dark:border-transparent dark:bg-fill dark:shadow-none';
+
 const box = tv({
-  // Filled, not outlined: inputs sit inside cards, and an outline there reads as a box in a box.
-  // The border is always 1px (transparent at rest) so focusing doesn't shift the layout.
+  // The border is always 1px so focusing doesn't shift the layout.
   base: 'h-10 flex-row items-center gap-2.5 rounded-[12px] border px-3',
   variants: {
     state: {
-      idle: 'border-transparent bg-fill',
-      focused: 'border-primary bg-surface',
-      error: 'border-danger bg-fill',
+      idle: FIELD_SURFACE,
+      focused: 'border-primary bg-surface shadow-card dark:shadow-none',
+      error: 'border-danger bg-surface shadow-card dark:bg-fill dark:shadow-none',
     },
     multiline: { true: 'h-auto min-h-[104px] items-stretch py-2.5' },
     compact: { true: 'h-9 rounded-[10px]' },

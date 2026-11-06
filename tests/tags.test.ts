@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { cleanTag, mergeHints, parseTags, replaceTag, ruleTags, tagsColumn, toggleTag } from '../src/lib/tags.ts';
+import { cleanTag, closeTag, mergeHints, parseTags, rankTagMatches, replaceTag, ruleTags, tagsColumn, toggleTag } from '../src/lib/tags.ts';
 
 test('cleanTag trims, drops a leading #, squeezes spaces', () => {
   assert.equal(cleanTag('  #Goa   trip '), 'Goa trip');
@@ -46,4 +46,22 @@ test('mergeHints puts history first, drops duplicates and picked tags, caps the 
   assert.deepEqual(mergeHints(['Goa trip', 'Office'], ['tax saving', 'Shared'], ['office']), ['Goa trip', 'tax saving', 'Shared']);
   assert.deepEqual(mergeHints(['A', 'B', 'C', 'D', 'E'], [], [], 4), ['A', 'B', 'C', 'D']);
   assert.deepEqual(mergeHints(['Shared'], ['shared'], []), ['Shared']);
+});
+
+test('rankTagMatches: prefix, word start, contains, then typos', () => {
+  const tags = ['Office', 'Goa trip', 'Trip to Ooty', 'Reimbursable', 'Business'];
+  assert.deepEqual(rankTagMatches('tri', tags), ['Trip to Ooty', 'Goa trip']);
+  assert.deepEqual(rankTagMatches('goa trp', tags), ['Goa trip']);
+  assert.deepEqual(rankTagMatches('reimbursible', tags), ['Reimbursable']);
+  assert.deepEqual(rankTagMatches('xyz', tags), []);
+});
+
+test('closeTag: same letters or a near miss counts as the existing tag', () => {
+  const tags = ['Goa trip', 'Office', 'Tax saving'];
+  assert.equal(closeTag('goa trip', tags), 'Goa trip');
+  assert.equal(closeTag('Goa trp', tags), 'Goa trip');
+  assert.equal(closeTag('Tax savng', tags), 'Tax saving');
+  assert.equal(closeTag('Ofice', tags), 'Office');
+  assert.equal(closeTag('Ooty', tags), null);
+  assert.equal(closeTag('Gym', tags), null);
 });

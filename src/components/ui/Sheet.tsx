@@ -83,7 +83,12 @@ export const Sheet = forwardRef<SheetRef, SheetProps>(function Sheet(
       </View>
     ) : null;
 
-  const body = <View className={cn('gap-3 px-5 pb-8', !heading && 'pt-6', contentClassName)}>{mounted ? children : null}</View>;
+  // A scrollable sheet gets room for the floating footer from TrueSheet itself; a fixed one needs it here.
+  const body = (
+    <View className={cn('gap-3 px-5', footer && !scrollable ? 'pb-32' : 'pb-8', !heading && 'pt-6', contentClassName)}>
+      {mounted ? children : null}
+    </View>
+  );
 
   return (
     <TrueSheet
@@ -95,7 +100,20 @@ export const Sheet = forwardRef<SheetRef, SheetProps>(function Sheet(
       grabberOptions={{ color: grabber }}
       dismissible={dismissible}
       header={heading ?? undefined}
-      footer={footer}
+      // The footer is laid out here, not by each caller: side padding and a hairline above. The gesture-bar
+      // inset is TrueSheet's: it pads its own footer container with it, so the colour goes on that container
+      // (footerStyle) to fill the strip. No pb-safe here, it would double the inset.
+      footer={
+        footer ? (
+          <View className="border-t border-line px-5 py-3" style={{ backgroundColor: background }}>
+            {footer}
+          </View>
+        ) : undefined
+      }
+      footerStyle={{ backgroundColor: background }}
+      // Absolute: the footer floats above the content and rises above the keyboard. The default ("relative")
+      // stays behind the keyboard, which hid the button on sheets that open typing (New category).
+      footerOptions={{ position: 'absolute' }}
       // RN 0.88 types ScrollView as a function component; TrueSheet wants the host ref.
       scrollableRef={scrollable ? (scrollRef as unknown as RefObject<{ getScrollableNode(): unknown }>) : undefined}
       onDidDismiss={() => onDismiss?.()}

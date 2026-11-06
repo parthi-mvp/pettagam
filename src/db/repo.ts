@@ -1,6 +1,7 @@
 import * as Crypto from 'expo-crypto';
 import type { SQLiteBindValue, SQLiteDatabase } from 'expo-sqlite';
 
+import { CATEGORY_COLORS } from '@/catalog/categories';
 import { parseDetails, type ChitDetails } from '@/lib/invest';
 import { parseTags, replaceTag, tagsColumn } from '@/lib/tags';
 
@@ -198,9 +199,9 @@ export function listTransactions(
     params.push(f.accountId, f.accountId);
   }
   if (f.search) {
-    where.push('(t.merchant LIKE ? OR t.note LIKE ? OR c.name LIKE ? OR t.tags LIKE ?)');
+    where.push('(t.merchant LIKE ? OR t.note LIKE ? OR c.name LIKE ? OR t.tags LIKE ? OR t.via LIKE ?)');
     const q = `%${f.search}%`;
-    params.push(q, q, q, q);
+    params.push(q, q, q, q, q);
   }
   if (f.tag) {
     where.push(HAS_TAG);
@@ -288,6 +289,30 @@ export async function setSetting(db: SQLiteDatabase, key: string, value: string 
     'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
     [key, value]
   );
+}
+
+/**
+ * A new category from just a name (quick-add from the category sheet). Names are unique per kind,
+ * ignoring case: an existing one is returned as is, and a deleted one with the same name comes back
+ * rather than being created twice. Colour: the next in the palette; icon guessed from the name later.
+ */
+export async function createCategory(
+  db: SQLiteDatabase,
+  name: string,
+  kind: Category['kind'],
+  look?: { icon: string; color: string }
+): Promise<string> {
+  const n = name.trim().replace(/\s+/g, ' ');
+  const all = await db.getAllAsync<Category>('SELECT * FROM categories WHERE kind = ? AND lower(name) = lower(?) ORDER BY deleted', [kind, n]);
+  const live = all.find((c) => !c.deleted);
+  if (live) return live.id;
+  const gone = all[0];
+  if (gone) {
+    const { created_at: _c, updated_at: _u, deleted: _d, ...row } = gone;
+    return save(db, 'categories', { ...row, ...look });
+  }
+  const count = await db.getFirstAsync<{ n: number }>('SELECT COUNT(*) AS n FROM categories WHERE deleted = 0');
+  return save(db, 'categories', { name: n, kind, color: look?.color ?? CATEGORY_COLORS[(count?.n ?? 0) % CATEGORY_COLORS.length], icon: look?.icon ?? null });
 }
 
 /** Patch every live transaction matching `where` through save(), so each change is stamped and synced. */

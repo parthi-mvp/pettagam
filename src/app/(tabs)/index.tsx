@@ -3,13 +3,13 @@ import { router } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState, type ReactNode } from 'react';
-import { Pressable, RefreshControl, View } from 'react-native';
+import { AppState, Pressable, RefreshControl, View } from 'react-native';
 import Animated, { Easing, FadeInDown, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import { toast } from 'sonner-native';
 
 import { useAuth } from '@/auth/session';
 import { categoryIcon, ChestMark, Icon } from '@/components/icons';
-import { Amount, Button, Card, Divider, Empty, IconTile, PressableScale, Row, Screen, SectionTitle, Text } from '@/components/ui';
+import { Amount, Button, Card, Divider, Empty, PressableScale, Row, Screen, SectionTitle, Text } from '@/components/ui';
 import { Motion } from '@/constants/theme';
 import { useLiveQuery } from '@/db/events';
 import { listTransactions } from '@/db/repo';
@@ -17,9 +17,12 @@ import { cn } from '@/lib/cn';
 import { dateLabel, money, monthRange, tidyName } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
 import { budgetOverview } from '@/budget/queries';
-import { BUDGET_TEXT, BudgetBar } from '@/components/budget-bar';
-import { categoryBreakdown, insights, monthlyTrend, netWorth } from '@/reports/analytics';
+import { BUDGET_TEXT } from '@/components/budget-bar';
+import { MonthSpendBars, PaceChart, RankedShares } from '@/components/charts';
+import { categoryBreakdown, insights, monthlyTrend, netWorth, spendPace } from '@/reports/analytics';
+import { pendingSms } from '@/sms/pending';
 import { syncNow } from '@/sync/neon-sync';
+import { describeSyncError } from '@/sync/wire';
 import { useSyncStatus } from '@/sync/use-sync-status';
 import { useThemeColors } from '@/theme/useThemeColor';
 
@@ -104,6 +107,15 @@ export default function Home() {
   const atRisk = (budget?.categories ?? []).filter((c) => c.status.state !== 'ok').slice(0, 2);
   const { data: tips } = useLiveQuery(insights, ['transactions', 'accounts', 'investments']);
   const { data: recent } = useLiveQuery((d) => listTransactions(d, { limit: 5 }), ['transactions', 'accounts', 'categories']);
+  // Bank SMS since the last import (no AI): checked on open, on return to the app and after imports.
+  const { data: pending, reload: recheckSms } = useLiveQuery(pendingSms, ['transactions']);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => st === 'active' && recheckSms());
+    return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const { data: pace } = useLiveQuery((d) => spendPace(d), ['transactions']);
+  const { data: trend } = useLiveQuery((d) => monthlyTrend(d, 6), ['transactions']);
 
   const firstName = (user?.name || user?.email?.split('@')[0] || '').split(' ')[0];
   const spent = month?.expense ?? 0;
@@ -111,7 +123,17 @@ export default function Home() {
   const saved = earned - spent;
   const now = new Date();
   const daysLeft = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate();
-  const topCats = (cats ?? []).slice(0, 4);
+  const monthName = now.toLocaleDateString('en-IN', { month: 'long' });
+  // Last month's running total on the same day, for "₹X less than Oct by today".
+  const prevByToday = pace ? (pace.previous[Math.min(pace.today, pace.previous.length - 1)] ?? 0) : 0;
+  // Top five categories, the rest folded into one "Other" row.
+  const shares = (() => {
+    const list = (cats ?? []).filter((c) => c.total > 0);
+    const top = list.slice(0, 5).map((c) => ({ key: c.id ?? c.name, name: c.name, color: c.color, icon: categoryIcon(c.name, undefined, c.icon), total: c.total }));
+    const rest = list.slice(5).reduce((sum, c) => sum + c.total, 0);
+    return rest > 0 ? [...top, { key: 'other', name: 'Other', color: '#8E8E93', icon: 'ms:category' as const, total: rest }] : top;
+  })();
+  const avgSpend = trend?.length ? trend.reduce((sum, m) => sum + m.expense, 0) / trend.length : 0;
   const tip = tips?.find((x) => !x.startsWith('Add a few'));
 
   const cardDues = (nw?.cards ?? []).filter((c) => c.due > 0.5);
@@ -125,11 +147,12 @@ export default function Home() {
     try {
       await syncNow(db);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (/network/i.test(msg)) toast.info('You’re offline', { description: 'Changes are saved and will upload later.' });
+      // Offline isn't a failure: a calm note. Anything else: one plain sentence, never the raw server text.
+      const { offline, message } = describeSyncError(e instanceof Error ? e.message : String(e));
+      if (offline) toast.info('You’re offline', { description: 'Your changes are saved on this phone and will upload when you’re back online.' });
       else {
         haptic.error();
-        toast.error('Couldn’t sync', { description: msg.slice(0, 140) });
+        toast.error('Couldn’t sync', { description: message ?? undefined });
       }
     } finally {
       setRefreshing(false);
@@ -236,119 +259,44 @@ export default function Home() {
             </Card>
           </Section>
 
-          {/* SMS import (Android build only) */}
-          {isSmsReadingAvailable ? (
-            <Section i={2}>
+          {/* Updates under the net worth: bank SMS waiting to be imported, then what falls due soon. */}
+          {pending && pending.count > 0 ? (
+            <Section i={1}>
               <Card padded={false} className="flex-row items-center gap-2.5 rounded-2xl py-2.5 pl-3 pr-2.5">
                 <View className="h-9 w-9 items-center justify-center rounded-[10px] bg-primary-soft">
                   <Icon name="sms" size={18} color={primary} />
                 </View>
                 <View className="min-w-0 flex-1">
-                  <Text variant="label" tone="default">New bank SMS?</Text>
-                  <Text variant="caption">Check the category before saving</Text>
+                  <Text variant="label" tone="default">
+                    {`${pending.count} new bank SMS${pending.firstTime ? ' in 30 days' : ''}`}
+                  </Text>
+                  <Text variant="caption" tabular numberOfLines={1}>
+                    {[pending.out > 0 ? `${money(pending.out)} out` : null, pending.in > 0 ? `${money(pending.in)} in` : null].filter(Boolean).join(' · ') ||
+                      'Transfers and card payments'}
+                  </Text>
+                </View>
+                <Button variant="tinted" size="sm" title="Review" onPress={() => router.push('/sms-import')} className="px-3.5" />
+              </Card>
+            </Section>
+          ) : isSmsReadingAvailable && pending === null ? (
+            // SMS can't be read yet (no permission): the plain prompt; Review asks for it.
+            <Section i={1}>
+              <Card padded={false} className="flex-row items-center gap-2.5 rounded-2xl py-2.5 pl-3 pr-2.5">
+                <View className="h-9 w-9 items-center justify-center rounded-[10px] bg-primary-soft">
+                  <Icon name="sms" size={18} color={primary} />
+                </View>
+                <View className="min-w-0 flex-1">
+                  <Text variant="label" tone="default">Bank SMS</Text>
+                  <Text variant="caption">Turn your bank alerts into entries</Text>
                 </View>
                 <Button variant="tinted" size="sm" title="Review" onPress={() => router.push('/sms-import')} className="px-3.5" />
               </Card>
             </Section>
           ) : null}
 
-          {empty ? (
-            <Section i={3}>
-              <Empty
-                text={'Start by adding your bank accounts and cards.\nAdd the last 4 digits so bank SMS match automatically.'}
-                action={<Button size="sm" title="Add account" icon="plus" onPress={() => router.push('/account-form')} />}
-              />
-            </Section>
-          ) : null}
-
-          {/* This month's spending */}
-          <Section i={3}>
-            <SectionTitle title={`${now.toLocaleDateString('en-IN', { month: 'long' })} spending`} action="Reports" onAction={() => router.push('/reports')} />
-            <Card className="gap-2 rounded-2xl px-3.5 py-3">
-              <View className="flex-row items-baseline justify-between gap-2">
-                <Amount size={20} weight="semibold" style={{ letterSpacing: -0.2 }}>
-                  {money(spent)}
-                </Amount>
-                {budget?.overall ? (
-                  <Text variant="caption" tone={BUDGET_TEXT[budget.overall.status.state]} tabular>
-                    {budget.overall.status.state === 'over'
-                      ? `${money(budget.overall.status.over)} over budget`
-                      : `${money(budget.overall.status.remaining)} left · ${money(budget.overall.status.perDay)}/day`}
-                  </Text>
-                ) : (
-                  <Text variant="caption">
-                    {earned <= 0 ? `${daysLeft} days left` : `of ${money(earned)} earned · ${daysLeft} days left`}
-                  </Text>
-                )}
-              </View>
-              {/* With a monthly budget the bar is the budget; otherwise spending against income. */}
-              {budget?.overall ? (
-                <BudgetBar used={budget.overall.status.used} state={budget.overall.status.state} />
-              ) : earned > 0 ? (
-                <View
-                  className="h-1.5 overflow-hidden rounded-full bg-fill"
-                  accessibilityRole="progressbar"
-                  accessibilityLabel={`${Math.round(Math.min(1, spent / earned) * 100)}% of income spent`}>
-                  <View className={cn('h-full rounded-full', spent > earned ? 'bg-danger' : 'bg-primary')} style={{ width: `${Math.min(100, (spent / earned) * 100)}%` }} />
-                </View>
-              ) : null}
-              {atRisk.length > 0 ? (
-                <View className="flex-row flex-wrap gap-1.5">
-                  {atRisk.map((c) => (
-                    <Pressable
-                      key={c.budget.id}
-                      onPress={() => router.push('/budgets')}
-                      className={cn('flex-row items-center gap-1.5 rounded-chip px-2.5 py-1', c.status.state === 'over' ? 'bg-danger-soft' : 'bg-warning-soft')}>
-                      <Text variant="caption" weight="medium" tone={BUDGET_TEXT[c.status.state]}>
-                        {c.category!.name.replace(/ & .*/, '')}{' '}
-                        {c.status.state === 'over' ? `${money(c.status.over)} over` : `${Math.round(c.status.used * 100)}% used`}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-              ) : null}
-              {budget && !budget.overall && budget.categories.length === 0 ? (
-                <Pressable onPress={() => router.push('/budgets')} hitSlop={6} className="self-start active:opacity-60">
-                  <Text variant="caption" weight="medium" tone="primary">
-                    Set a monthly budget ›
-                  </Text>
-                </Pressable>
-              ) : null}
-              {topCats.length > 0 ? (
-                <View className="flex-row gap-2 pt-1">
-                  {topCats.map((c) => (
-                    <View key={c.name} className="flex-1 items-center gap-1.5">
-                      <IconTile icon={categoryIcon(c.name, undefined, c.icon)} color={c.color} />
-                      <Text variant="caption" numberOfLines={1}>
-                        {c.name.replace(/ & .*/, '')}
-                      </Text>
-                      <Amount size={13} weight="medium">
-                        {money(c.total)}
-                      </Amount>
-                    </View>
-                  ))}
-                </View>
-              ) : (
-                <Text variant="caption">No spending recorded this month yet</Text>
-              )}
-            </Card>
-          </Section>
-
-          {/* Insight */}
-          {tip ? (
-            <Section i={4}>
-              <Card variant="brass" className="gap-1 rounded-2xl">
-                <Text variant="eyebrow" tone="brass">
-                  Insight
-                </Text>
-                <Text variant="muted" weight="regular" className="text-brass-deep">{tip}</Text>
-              </Card>
-            </Section>
-          ) : null}
-
           {/* Dues */}
           {hasDues ? (
-            <Section i={5}>
+            <Section i={2}>
               <SectionTitle title="Upcoming dues" action="Accounts" onAction={() => router.push('/accounts')} />
               <Card className="rounded-2xl px-3 py-0.5">
                 {cardDues.map((c, i) => (
@@ -376,6 +324,115 @@ export default function Home() {
                     />
                   </View>
                 ))}
+              </Card>
+            </Section>
+          ) : null}
+
+
+          {empty ? (
+            <Section i={3}>
+              <Empty
+                text={'Start by adding your bank accounts and cards.\nAdd the last 4 digits so bank SMS match automatically.'}
+                action={<Button size="sm" title="Add account" icon="plus" onPress={() => router.push('/account-form')} />}
+              />
+            </Section>
+          ) : null}
+
+          {/* This month's spending: the main chart, pace against last month and the budget. */}
+          <Section i={3}>
+            <SectionTitle title={`${monthName} spending`} action="Reports" onAction={() => router.push('/reports')} />
+            <Card className="gap-3 rounded-2xl px-3.5 py-3.5">
+              <View className="gap-0.5">
+                <Amount size={24} weight="semibold" style={{ letterSpacing: -0.3 }}>
+                  {money(spent)}
+                </Amount>
+                {pace && prevByToday > 0 ? (
+                  <Text variant="small" tone={spent > prevByToday ? 'danger' : 'success'} tabular>
+                    {`${money(Math.abs(spent - prevByToday))} ${spent > prevByToday ? 'more' : 'less'} than ${pace.previousLabel} by today`}
+                  </Text>
+                ) : (
+                  <Text variant="small">{earned > 0 ? `of ${money(earned)} earned` : `${daysLeft} days left`}</Text>
+                )}
+              </View>
+
+              {pace ? (
+                <PaceChart
+                  current={pace.current}
+                  previous={pace.previous}
+                  days={pace.days}
+                  budget={budget?.overall?.budget.amount ?? null}
+                  monthLabel={now.toLocaleDateString('en-IN', { month: 'short' })}
+                  previousLabel={pace.previousLabel}
+                />
+              ) : null}
+
+              <View className="gap-2 border-t border-line pt-2.5">
+                {budget?.overall ? (
+                  <Text variant="caption" tone={BUDGET_TEXT[budget.overall.status.state]} tabular>
+                    {budget.overall.status.state === 'over'
+                      ? `${money(budget.overall.status.over)} over budget · ${daysLeft} days left`
+                      : `${money(budget.overall.status.remaining)} left · ${money(budget.overall.status.perDay)} a day for ${daysLeft} days`}
+                  </Text>
+                ) : (
+                  <Text variant="caption">{earned > 0 ? `${money(earned)} earned · ${daysLeft} days left` : `${daysLeft} days left`}</Text>
+                )}
+                {atRisk.length > 0 ? (
+                  <View className="flex-row flex-wrap gap-1.5">
+                    {atRisk.map((c) => (
+                      <Pressable
+                        key={c.budget.id}
+                        onPress={() => router.push('/budgets')}
+                        className={cn('flex-row items-center gap-1.5 rounded-chip px-2.5 py-1', c.status.state === 'over' ? 'bg-danger-soft' : 'bg-warning-soft')}>
+                        <Text variant="caption" weight="medium" tone={BUDGET_TEXT[c.status.state]}>
+                          {c.category!.name.replace(/ & .*/, '')}{' '}
+                          {c.status.state === 'over' ? `${money(c.status.over)} over` : `${Math.round(c.status.used * 100)}% used`}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : null}
+                {budget && !budget.overall && budget.categories.length === 0 ? (
+                  <Pressable onPress={() => router.push('/budgets')} hitSlop={6} className="self-start active:opacity-60">
+                    <Text variant="caption" weight="medium" tone="primary">
+                      Set a monthly budget ›
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </Card>
+          </Section>
+
+          {/* Where it went: a ranked list, quieter than the main chart. */}
+          {shares.length > 0 ? (
+            <Section i={4}>
+              <SectionTitle title="Where it went" action="Categories" onAction={() => router.push('/reports')} />
+              <Card className="rounded-2xl px-3.5 py-3.5">
+                <RankedShares items={shares} total={spent} onPress={() => router.push('/reports')} />
+              </Card>
+            </Section>
+          ) : null}
+
+          {/* The last six months, small. */}
+          {trend && trend.some((m) => m.expense > 0) ? (
+            <Section i={5}>
+              <SectionTitle title="Last 6 months" detail={`${money(avgSpend)} a month on average`} />
+              <Card className="rounded-2xl px-3.5 py-3.5">
+                <MonthSpendBars months={trend.map((m) => ({ label: m.label, value: m.expense }))} />
+              </Card>
+            </Section>
+          ) : null}
+
+          {/* Insight */}
+          {tip ? (
+            <Section i={4}>
+              <Card className="flex-row gap-2.5 rounded-2xl">
+                <Icon name="bulb" size={18} color={brassInk} strokeWidth={2} />
+                <View className="min-w-0 flex-1 gap-0.5">
+                  <Text variant="small" weight="medium" tone="brass">
+                    Insight
+                  </Text>
+                  <Text tone="default">{tip}</Text>
+                </View>
               </Card>
             </Section>
           ) : null}

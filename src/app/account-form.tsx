@@ -4,10 +4,14 @@ import { useEffect, useState } from 'react';
 import { Alert, Pressable, View } from 'react-native';
 
 import { ACCOUNT_ICON, ACCOUNT_TYPE_OPTIONS, BankPicker, OptionPicker } from '@/components/pickers';
-import { Button, Field, FormSection, Screen, Text } from '@/components/ui';
+import { NetworkMark } from '@/components/network-mark';
+import { Button, Field, FormSection, PressableScale, Screen, Text } from '@/components/ui';
 import { getById, save, softDelete } from '@/db/repo';
 import { isCardLike, isLiability, isPersonal, type AccountType } from '@/db/types';
 import type { BankKind } from '@/catalog/banks';
+import { NETWORKS, networkById, type CardNetwork } from '@/catalog/networks';
+import { cn } from '@/lib/cn';
+import { haptic } from '@/lib/haptics';
 
 const NAME_HINT: Partial<Record<AccountType, string>> = {
   credit_card: 'HDFC Millennia',
@@ -38,6 +42,7 @@ export default function AccountForm() {
   const [limit, setLimit] = useState('');
   const [billingDay, setBillingDay] = useState('');
   const [notes, setNotes] = useState('');
+  const [network, setNetwork] = useState<CardNetwork | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -52,6 +57,7 @@ export default function AccountForm() {
       setLimit(a.credit_limit != null ? String(a.credit_limit) : '');
       setBillingDay(a.billing_day != null ? String(a.billing_day) : '');
       setNotes(a.notes ?? '');
+      setNetwork(networkById(a.network)?.id ?? null);
     });
   }, [db, id]);
 
@@ -81,6 +87,8 @@ export default function AccountForm() {
       credit_limit: isCardLike(type) ? num(limit) : null,
       billing_day: day,
       notes: notes.trim() || null,
+      // A bank account's network is its debit card's; cash, wallets, loans and people have none.
+      network: isCardLike(type) || hasDebitCard ? network : null,
     });
     router.back();
   };
@@ -141,6 +149,38 @@ export default function AccountForm() {
           </View>
         ) : null}
       </FormSection>
+
+      {isCardLike(type) || hasDebitCard ? (
+        <FormSection title={hasDebitCard ? 'Debit card network' : 'Card network'}>
+          <View className="flex-row flex-wrap gap-2" accessibilityRole="radiogroup">
+            {NETWORKS.map((n) => {
+              const active = n.id === network;
+              return (
+                <PressableScale
+                  key={n.id}
+                  scaleTo={0.96}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: active }}
+                  accessibilityLabel={n.name}
+                  onPress={() => {
+                    haptic.selection();
+                    setNetwork(active ? null : n.id); // tap again to clear
+                  }}
+                  className={cn(
+                    'h-14 w-[23%] items-center justify-center gap-1 rounded-[12px] border-[1.5px] bg-surface',
+                    active ? 'border-primary' : 'border-line'
+                  )}>
+                  <NetworkMark network={n.id} height={16} tone="surface" />
+                  <Text variant="caption" numberOfLines={1} weight={active ? 'semibold' : 'regular'}>
+                    {n.id === 'amex' ? 'Amex' : n.name}
+                  </Text>
+                </PressableScale>
+              );
+            })}
+          </View>
+          <Text variant="caption">Shown on the card in Accounts. Card alerts that name it fill it in for you.</Text>
+        </FormSection>
+      ) : null}
 
       {type !== 'cash' && !personal ? (
         <FormSection title="SMS matching">

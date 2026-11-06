@@ -11,8 +11,10 @@ import { useThemeColors } from '@/theme/useThemeColor';
  *  - three thin accent rings in that corner (the "strongbox" motif).
  * Theme tokens throughout, so each colour theme gets its own. Parent must be overflow-hidden.
  */
-export function HeroBackdrop() {
-  const [light, mid, deep, accent] = useThemeColors(['hero-tile', 'hero-top', 'hero', 'brass'] as const);
+export function HeroBackdrop({ colors }: { colors?: readonly [light: string, mid: string, deep: string] } = {}) {
+  const [themeLight, themeMid, themeDeep, accent] = useThemeColors(['hero-tile', 'hero-top', 'hero', 'brass'] as const);
+  // `colors` swaps the gradient (e.g. green for income); otherwise the colour theme's own.
+  const [light, mid, deep] = colors ?? [themeLight, themeMid, themeDeep];
   const id = useId().replace(/[^a-zA-Z0-9]/g, '');
   return (
     // The wrapper takes the parent's full size; the Svg fills the wrapper. (An absolutely-filled

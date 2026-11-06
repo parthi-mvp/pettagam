@@ -6,6 +6,7 @@ import { parseDetails } from '@/lib/invest';
 import { parseTags } from '@/lib/tags';
 import { INVESTMENT_TYPE_LABELS, isCardLike, isLiability, type InvestmentType } from '@/db/types';
 import { money, monthLabel, monthRange } from '@/lib/format';
+import { findRecurring, type Payment } from './recurring';
 
 export type CategorySlice = { id: string | null; name: string; color: string; icon: string | null; total: number };
 export type MonthPoint = { label: string; start: number; income: number; expense: number };
@@ -19,6 +20,50 @@ export async function categoryBreakdown(db: SQLiteDatabase, from: number, to: nu
      GROUP BY t.category_id ORDER BY total DESC`,
     [kind, from, to]
   );
+}
+
+/** Spending in a period by how it was paid (UPI, card, NEFT…); via null = not recorded (hand-made entries). */
+export const paymentMethods = (db: SQLiteDatabase, from: number, to: number) =>
+  db.getAllAsync<{ via: string | null; total: number; count: number }>(
+    `SELECT CASE WHEN via IN ('neft', 'imps', 'rtgs', 'netbanking') THEN 'transfer' ELSE via END AS via,
+            SUM(amount) AS total, COUNT(*) AS count FROM transactions
+     WHERE deleted = 0 AND type = 'expense' AND date >= ? AND date < ?
+     GROUP BY 1 ORDER BY total DESC`,
+    [from, to]
+  );
+
+export type SpendPace = {
+  /** Days in this month, and today's 0-based index in it. */
+  days: number;
+  today: number;
+  /** Running total of spending, day by day: this month up to today, last month in full. */
+  current: number[];
+  previous: number[];
+  previousLabel: string;
+};
+
+/** Expense per day of a month, as a running total (index 0 = the 1st). */
+async function runningSpend(db: SQLiteDatabase, start: number, end: number, upto: number) {
+  const rows = await db.getAllAsync<{ d: number; total: number }>(
+    `SELECT CAST((date - ?) / 86400000 AS INTEGER) AS d, SUM(amount) AS total FROM transactions
+     WHERE deleted = 0 AND type = 'expense' AND date >= ? AND date < ? GROUP BY d`,
+    [start, start, end]
+  );
+  const perDay = new Array<number>(upto).fill(0);
+  for (const r of rows) if (r.d >= 0 && r.d < upto) perDay[r.d] += r.total;
+  let sum = 0;
+  return perDay.map((v) => (sum += v));
+}
+
+/** This month's spending pace against last month's, for the Home chart. */
+export async function spendPace(db: SQLiteDatabase, now = new Date()): Promise<SpendPace> {
+  const cur = monthRange(0, now);
+  const prev = monthRange(-1, now);
+  const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const prevDays = new Date(now.getFullYear(), now.getMonth(), 0).getDate();
+  const today = now.getDate() - 1;
+  const [current, previous] = await Promise.all([runningSpend(db, cur.start, cur.end, today + 1), runningSpend(db, prev.start, prev.end, prevDays)]);
+  return { days, today, current, previous, previousLabel: new Date(prev.start).toLocaleDateString('en-IN', { month: 'short' }) };
 }
 
 export async function monthlyTrend(db: SQLiteDatabase, months = 6): Promise<MonthPoint[]> {
@@ -178,11 +223,11 @@ export async function insights(db: SQLiteDatabase): Promise<string[]> {
 export async function exportCsv(db: SQLiteDatabase): Promise<string> {
   const rows = await db.getAllAsync<Record<string, string | number | null>>(
     `SELECT date(t.date/1000,'unixepoch','localtime') AS date, t.type, t.amount, a.name AS account,
-            ta.name AS to_account, c.name AS category, t.merchant, t.note, t.source, t.tags
+            ta.name AS to_account, c.name AS category, t.merchant, t.note, t.source, t.via, t.tags
      FROM transactions t LEFT JOIN accounts a ON a.id=t.account_id LEFT JOIN accounts ta ON ta.id=t.to_account_id
      LEFT JOIN categories c ON c.id=t.category_id WHERE t.deleted=0 ORDER BY t.date DESC`
   );
-  const cols = ['date', 'type', 'amount', 'account', 'to_account', 'category', 'merchant', 'note', 'source', 'tags'];
+  const cols = ['date', 'type', 'amount', 'account', 'to_account', 'category', 'merchant', 'note', 'source', 'via', 'tags'];
   const esc = (v: unknown) => {
     const s = v == null ? '' : String(v);
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -190,4 +235,35 @@ export async function exportCsv(db: SQLiteDatabase): Promise<string> {
   // Tags as "Goa trip; Reimbursable" rather than raw JSON.
   const cell = (r: Record<string, string | number | null>, c: string) => (c === 'tags' ? parseTags(r.tags as string | null).join('; ') : r[c]);
   return [cols.join(','), ...rows.map((r) => cols.map((c) => esc(cell(r, c))).join(','))].join('\n');
+}
+
+/** Subscriptions, rent, EMIs and bills: steady payments to one merchant over the last 13 months. */
+export async function recurringPayments(db: SQLiteDatabase, now = Date.now()) {
+  const rows = await db.getAllAsync<Payment & { color: string | null; icon: string | null }>(
+    `SELECT t.merchant AS merchant, t.amount AS amount, t.date AS date, c.name AS category, c.color AS color, c.icon AS icon
+     FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
+     WHERE t.deleted = 0 AND t.type = 'expense' AND t.merchant IS NOT NULL AND t.date >= ?`,
+    [monthRange(-12, new Date(now)).start]
+  );
+  const look = new Map(rows.map((r) => [r.merchant.trim().toLowerCase(), { color: r.color, icon: r.icon }]));
+  return findRecurring(rows, now).map((r) => ({ ...r, ...(look.get(r.merchant.toLowerCase()) ?? { color: null, icon: null }) }));
+}
+
+export type CategoryTrend = { id: string | null; name: string; color: string; icon: string | null; months: number[] };
+
+/** Spending per category for the last `months` months (oldest first), biggest overall first. */
+export async function categoryTrend(db: SQLiteDatabase, months = 6, now = new Date()): Promise<CategoryTrend[]> {
+  const ranges = Array.from({ length: months }, (_, i) => monthRange(i - months + 1, now));
+  const byId = new Map<string, CategoryTrend>();
+  const slices = await Promise.all(ranges.map((r) => categoryBreakdown(db, r.start, r.end)));
+  slices.forEach((list, m) => {
+    for (const c of list) {
+      const key = c.id ?? 'none';
+      let row = byId.get(key);
+      if (!row) byId.set(key, (row = { id: c.id, name: c.name, color: c.color, icon: c.icon, months: Array(months).fill(0) }));
+      row.months[m] = c.total;
+    }
+  });
+  const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+  return [...byId.values()].sort((a, b) => sum(b.months) - sum(a.months));
 }

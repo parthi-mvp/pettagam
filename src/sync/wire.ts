@@ -131,3 +131,19 @@ export function jwtExpiry(jwt: string, decode: (b64: string) => string = globalT
     return 0;
   }
 }
+
+/** No internet, as the phone reports it (fetch, DNS, socket and timeout errors). */
+const OFFLINE_RE = /network|fetch failed|failed to fetch|unknownhost|unable to resolve host|no address associated|timed? ?out|timeout|econn|enotfound|socket|connection (?:refused|reset|abort)|internet/i;
+
+/**
+ * A sync or server error, in words for people. Offline isn't an error (edits wait on the phone), so it
+ * gets no message. Everything else becomes one plain sentence; the raw text never reaches the screen.
+ */
+export function describeSyncError(raw: string): { offline: boolean; message: string | null } {
+  if (OFFLINE_RE.test(raw)) return { offline: true, message: null };
+  if (/sign in again|session expired|\b401\b|jwt/i.test(raw)) return { offline: false, message: 'Your sign-in has expired. Sign in again to keep syncing.' };
+  if (/PGRST20[45]|does not exist|schema cache/i.test(raw))
+    return { offline: false, message: 'The server needs an update before these changes can upload. They’re kept on this phone.' };
+  if (/refused by the server|\b4\d\d\b/.test(raw)) return { offline: false, message: 'Some changes couldn’t be saved to your account. They’re kept on this phone.' };
+  return { offline: false, message: 'Couldn’t reach your account right now. Your changes are safe on this phone; we’ll try again.' };
+}

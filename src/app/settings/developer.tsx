@@ -9,7 +9,7 @@ export default function DeveloperTools() {
       <Card className="gap-0 py-1">
         <Row icon="sms" title="New-SMS card" subtitle="Fire the pop-up card or notification with a sample SMS" onPress={() => router.push('/settings/sms-card-test')} />
         <Divider />
-        <Row icon="tag" title="Category & tag tester" subtitle="Paste or pick an SMS, see the category and tag suggestions" onPress={() => router.push('/settings/sms-lab')} />
+        <Row icon="sms" title="SMS tester" subtitle="Paste or pick an SMS, see everything the import decides" onPress={() => router.push('/settings/sms-lab')} />
       </Card>
       <Text variant="caption">Only in development builds. Nothing here is shown in the released app.</Text>
     </Screen>

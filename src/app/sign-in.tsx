@@ -12,6 +12,7 @@ import { haptic } from '@/lib/haptics';
 import { useWelcomeSeen } from '@/onboarding/welcome-seen';
 import { DURATION } from '@/theme/motion';
 import { useThemeColors } from '@/theme/useThemeColor';
+import { describeSyncError } from '@/sync/wire';
 
 /** Signed out, the app always opens on the welcome screens; sign-in is reached from there. */
 export default function SignIn() {
@@ -49,7 +50,7 @@ function SignInForm() {
     } catch (err) {
       haptic.error();
       const msg = err instanceof Error ? err.message : String(err);
-      setError(/network/i.test(msg) ? 'No internet connection. Signing in needs to be online once.' : msg);
+      setError(describeSyncError(msg).offline ? 'No internet connection. Signing in needs to be online once.' : msg);
     } finally {
       setBusy(false);
     }

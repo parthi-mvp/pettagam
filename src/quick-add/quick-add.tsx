@@ -166,6 +166,7 @@ function QuickAddCard({ address, body, date }: QuickAddProps) {
                     {`${kind === 'atm' ? '' : income ? '+' : '−'}${money(item.amount, true)}`}
                   </Text>
                   {item.ai ? <Text variant="caption">Read with AI · check before saving</Text> : null}
+                  {item.cardPayment ? <Text variant="caption">Card bill payment · saved as a transfer from your bank</Text> : null}
                 </View>
 
                 <SegmentedControl<Kind>
@@ -215,6 +216,8 @@ function QuickAddCard({ address, body, date }: QuickAddProps) {
                         haptic.selection();
                         update({ categoryId: v });
                       }}
+                      createKind={item.type}
+                      onCreated={async () => setCategories(await listCategories(db))} // this card's list isn't live
                     />
                   </View>
                 )}

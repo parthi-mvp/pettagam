@@ -1,6 +1,8 @@
 import { router } from 'expo-router';
+import { useState } from 'react';
 import { View } from 'react-native';
 
+import { SearchBox } from '@/components/pickers';
 import { Card, Divider, Empty, Row, Screen, Text } from '@/components/ui';
 import { useLiveQuery } from '@/db/events';
 import { tagTotals } from '@/db/repo';
@@ -9,17 +11,23 @@ import { dateSpan, money } from '@/lib/format';
 /** Every tag with what was spent under it: a trip's total cost, office spends still to claim back. */
 export default function Tags() {
   const { data: tags } = useLiveQuery(tagTotals, ['transactions']);
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
+  const shown = (tags ?? []).filter((t) => !q || t.tag.toLowerCase().includes(q));
 
   return (
     <Screen>
       <Text variant="small">
         Tags group spending across categories: a trip, a wedding, office expenses to claim back. Add them to any transaction, below the note.
       </Text>
+      {tags && tags.length > 0 ? <SearchBox value={query} onChange={setQuery} placeholder="Search tags" /> : null}
       {tags && tags.length === 0 ? (
         <Empty text="No tags yet. Open a transaction and add one, like “Goa trip”." />
+      ) : q && shown.length === 0 ? (
+        <Empty text={`No tag matches “${query.trim()}”`} />
       ) : (
         <Card className="gap-0 py-1">
-          {(tags ?? []).map((t, i) => (
+          {shown.map((t, i) => (
             <View key={t.tag}>
               {i > 0 ? <Divider /> : null}
               <Row

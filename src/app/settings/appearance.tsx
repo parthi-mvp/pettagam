@@ -6,23 +6,23 @@ export default function AppearanceSettings() {
   const haptics = useHapticsPreference();
   return (
     <Screen>
-      <FormSection title="Mode">
+      <FormSection card title="Mode">
         <ModePicker />
       </FormSection>
 
-      <FormSection title="Colour theme">
+      <FormSection card title="Colour theme">
         <ThemePicker />
       </FormSection>
 
-      <FormSection title="Font">
+      <FormSection card title="Font">
         <FontPicker />
       </FormSection>
 
-      <FormSection title="Text size">
+      <FormSection card title="Text size">
         <TextSizePicker />
       </FormSection>
 
-      <FormSection title="Feel">
+      <FormSection card title="Feel">
         <SwitchRow
           title="Haptic feedback"
           description="A light tap when you save, sync or pick something"

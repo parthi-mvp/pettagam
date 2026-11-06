@@ -32,6 +32,8 @@ export type Account = SyncedRow & {
   credit_limit: number | null;
   billing_day: number | null; // credit card statement day (1-31)
   notes: string | null;
+  /** The card's network ('visa' | 'mastercard' | 'rupay' …, CardNetwork in src/catalog/networks.ts), or null. */
+  network: string | null;
 };
 
 export type CategoryKind = 'expense' | 'income';
@@ -59,6 +61,8 @@ export type Transaction = SyncedRow & {
   sms_hash: string | null; // dedupe key for SMS imports
   /** JSON array of tags ("Goa trip", "Reimbursable"), or null. Read and write through src/lib/tags.ts. */
   tags: string | null;
+  /** How the money moved, from the SMS: 'upi' | 'card' | 'neft' | … (Via in src/sms/parser.ts), or null. */
+  via: string | null;
 };
 
 export type InvestmentType =
@@ -185,7 +189,7 @@ export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
   overdraft: 'Overdraft',
   credit_card: 'Credit Card',
   pay_later: 'Pay Later',
-  wallet: 'Wallet / UPI',
+  wallet: 'Wallet', // a balance held in an app (Paytm, Amazon Pay). UPI isn't an account: it pays from the bank account
   meal_card: 'Meal Card',
   fastag: 'FASTag',
   cash: 'Cash',

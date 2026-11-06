@@ -1,8 +1,9 @@
-import { router } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { useState } from 'react';
 import { View } from 'react-native';
 
 import { categoryIcon } from '@/components/icons';
+import { SearchBox } from '@/components/pickers';
 import { Button, Card, Divider, Row, Screen, SegmentedControl, Text } from '@/components/ui';
 import { useLiveQuery } from '@/db/events';
 import { listCategories } from '@/db/repo';
@@ -15,12 +16,22 @@ const KINDS: { value: CategoryKind; label: string }[] = [
 
 export default function Categories() {
   const [kind, setKind] = useState<CategoryKind>('expense');
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
   const { data: categories } = useLiveQuery(listCategories, ['categories']);
-  const list = (categories ?? []).filter((c) => c.kind === kind);
+  const list = (categories ?? []).filter((c) => c.kind === kind && (!q || c.name.toLowerCase().includes(q)));
 
   return (
     <Screen>
+      <Stack.Screen
+        options={{
+          headerRight: () => (
+            <Button size="sm" variant="tinted" icon="plus" title="Add" onPress={() => router.push({ pathname: '/category-form', params: { kind } })} />
+          ),
+        }}
+      />
       <SegmentedControl options={KINDS} value={kind} onChange={setKind} />
+      <SearchBox value={query} onChange={setQuery} placeholder={`Search ${kind} categories`} />
 
       <Card className="gap-0 py-1">
         {list.map((c, i) => (
@@ -38,17 +49,10 @@ export default function Categories() {
         ))}
         {categories && list.length === 0 ? (
           <Text variant="muted" className="py-4 text-center">
-            No {kind} categories yet.
+            {q ? `No ${kind} category matches “${query.trim()}”` : `No ${kind} categories yet.`}
           </Text>
         ) : null}
       </Card>
-
-      <Button
-        variant="tinted"
-        icon="plus"
-        title={`New ${kind} category`}
-        onPress={() => router.push({ pathname: '/category-form', params: { kind } })}
-      />
     </Screen>
   );
 }

@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import {
   cookieHeader,
+  describeSyncError,
   fromServer,
   jwtExpiry,
   mergeCookies,
@@ -65,4 +66,16 @@ test('uploadRows: other errors (offline, auth) are thrown, not swallowed', async
     }, () => false),
     offline
   );
+});
+
+test('describeSyncError: offline is quiet, everything else is one plain sentence', () => {
+  const android = 'fetch failed: java.net.UnknownHostException: Unable to resolve host "ep-x.apirest.neon.tech": No address associated';
+  assert.deepEqual(describeSyncError(android), { offline: true, message: null });
+  assert.equal(describeSyncError('Network request failed').offline, true);
+  assert.equal(describeSyncError('timeout of 60000ms exceeded').offline, true);
+  const schema = describeSyncError('Data API 400 on /transactions?on_conflict=user_id,id: {"code":"PGRST204","message":"column \\"via\\" does not exist"}');
+  assert.equal(schema.offline, false);
+  assert.ok(schema.message && !/PGRST|transactions|column/.test(schema.message), 'no backend detail on screen');
+  assert.match(describeSyncError('Session expired. Please sign in again.').message ?? '', /Sign in again/);
+  assert.ok(describeSyncError('Something odd').message);
 });

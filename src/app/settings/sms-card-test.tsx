@@ -73,7 +73,7 @@ export default function SmsCardTest() {
 
   return (
     <Screen>
-      <FormSection title="Test the new-SMS card">
+      <FormSection card title="Test the new-SMS card">
         <Chips
           label="Sample message"
           options={SAMPLES}

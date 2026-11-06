@@ -1,4 +1,11 @@
+import { MaterialSymbols_300Light } from '@expo-google-fonts/material-symbols/300Light';
+import * as Font from 'expo-font';
+import { useEffect, useState } from 'react';
+import { Text, View } from 'react-native';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
+
+import { CATEGORY_CATALOG, LEGACY_CATEGORY_ICONS } from '@/catalog/categories';
+import { canonicalSymbol, symbolCodepoint } from '@/catalog/symbol-index';
 
 /**
  * Line icons from the Pettagam design system: 24px grid, 1.8px stroke, round caps/joins.
@@ -54,17 +61,55 @@ export type IconName =
   | 'sun'
   | 'moon';
 
+/**
+ * A category icon beyond the drawn set: any Material Symbols glyph ("ms:restaurant", 4,000 of them,
+ * src/catalog/material-symbols.ts) or an emoji ("emoji:🐶"). Stored as is in categories.icon.
+ */
+export type ExtraIcon = `ms:${string}` | `emoji:${string}`;
+export type AnyIcon = IconName | ExtraIcon;
+export const isExtraIcon = (name: string): name is ExtraIcon => name.startsWith('ms:') || name.startsWith('emoji:');
+
+// Light (300): a thinner stroke than Regular sits better beside the app's 1.8px line icons. Same glyphs.
+const MS_FAMILY = 'MaterialSymbols_300Light';
+let msLoading: Promise<void> | null = null;
+/** The ~1 MB icon font loads the first time a symbol is drawn, not at start-up. */
+const loadSymbols = () => (msLoading ??= Font.loadAsync({ [MS_FAMILY]: MaterialSymbols_300Light }));
+
+function ExtraGlyph({ name, size, color }: { name: ExtraIcon; size: number; color: string }) {
+  const symbol = name.startsWith('ms:');
+  const [ready, setReady] = useState(() => !symbol || Font.isLoaded(MS_FAMILY));
+  useEffect(() => {
+    if (!ready) loadSymbols().then(() => setReady(true), () => {});
+  }, [ready]);
+  if (!symbol) {
+    // Emoji keep their own colours; a touch smaller so they sit like the line icons.
+    return (
+      <Text allowFontScaling={false} style={{ fontSize: size * 0.85, lineHeight: size * 1.05, textAlign: 'center' }}>
+        {name.slice(6)}
+      </Text>
+    );
+  }
+  const cp = symbolCodepoint(name.slice(3));
+  if (!ready || cp == null) return <View style={{ width: size, height: size }} />;
+  return (
+    <Text allowFontScaling={false} style={{ fontFamily: MS_FAMILY, fontSize: size, lineHeight: size, width: size, color, textAlign: 'center' }}>
+      {String.fromCodePoint(cp)}
+    </Text>
+  );
+}
+
 export function Icon({
   name,
   size = 22,
   color,
   strokeWidth = 1.8,
 }: {
-  name: IconName;
+  name: AnyIcon;
   size?: number;
   color: string;
   strokeWidth?: number;
 }) {
+  if (isExtraIcon(name)) return <ExtraGlyph name={name} size={size} color={color} />;
   const p = { stroke: color, strokeWidth, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, fill: 'none' };
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" accessibilityElementsHidden importantForAccessibility="no">
@@ -361,29 +406,39 @@ export function ChestMark({ size = 38, color }: { size?: number; color: string }
   );
 }
 
-/** Category name → icon (falls back to a dot). */
-/** Icons a user can give a category (Categories → New category). */
-export const CATEGORY_ICONS: IconName[] = [
-  'bag', 'receipt', 'fuel', 'house', 'home', 'heart', 'film', 'book', 'plane', 'card', 'bank', 'coin',
-  'refund', 'repeat', 'chit', 'bulb', 'mail', 'sms', 'phone', 'gift', 'cart', 'coffee', 'pie', 'trend',
+// Categories draw from one set only: Material Symbols (or an emoji the user picked).
+const SEED_ICONS = new Map(CATEGORY_CATALOG.map((c) => [c.name.toLowerCase(), c.icon as ExtraIcon]));
+const GUESSES: [RegExp, string][] = [
+  [/food|dining/, 'restaurant'], [/grocer/, 'local_grocery_store'], [/shopping/, 'shopping_bag'], [/fuel|transport/, 'local_gas_station'],
+  [/bill|utilit/, 'receipt_long'], [/rent|housing/, 'home'], [/health|medic/, 'medical_services'], [/entertain/, 'movie'],
+  [/educat|school/, 'school'], [/emi|loan/, 'credit_card'], [/travel|trip/, 'flight'], [/salary/, 'payments'],
+  [/interest|dividend/, 'savings'], [/refund|cashback/, 'currency_exchange'],
 ];
 
-/** A category's icon: the one the user chose, else a guess from its name. */
-export function categoryIcon(category: string | null | undefined, type?: string, chosen?: string | null): IconName {
+/**
+ * A category's icon, always a Material Symbol (or the user's emoji):
+ * the symbol or emoji they chose → a default category's own symbol → an old drawn icon's closest symbol
+ * (LEGACY_CATEGORY_ICONS; stored values aren't rewritten) → a guess from the name. Transfers aren't a
+ * category and keep the transfer arrows.
+ */
+export function categoryIcon(category: string | null | undefined, type?: string, chosen?: string | null): AnyIcon {
   if (type === 'transfer') return 'transfer';
-  if (chosen && (CATEGORY_ICONS as string[]).includes(chosen)) return chosen as IconName;
-  const c = (category ?? '').toLowerCase();
-  if (/food|grocer|shopping/.test(c)) return 'bag';
-  if (/fuel|transport/.test(c)) return 'fuel';
-  if (/bill|utilit/.test(c)) return 'receipt';
-  if (/rent|housing/.test(c)) return 'house';
-  if (/health/.test(c)) return 'heart';
-  if (/entertain/.test(c)) return 'film';
-  if (/education/.test(c)) return 'book';
-  if (/emi|loan/.test(c)) return 'card';
-  if (/travel/.test(c)) return 'plane';
-  if (/salary/.test(c)) return 'bank';
-  if (/interest|dividend/.test(c)) return 'coin';
-  if (/refund|cashback/.test(c)) return 'refund';
-  return type === 'income' ? 'bank' : 'receipt';
+  if (chosen && isExtraIcon(chosen)) return chosen;
+  const c = (category ?? '').trim().toLowerCase();
+  const seed = SEED_ICONS.get(c);
+  if (seed && (!chosen || chosen in LEGACY_CATEGORY_ICONS)) return seed;
+  if (chosen && LEGACY_CATEGORY_ICONS[chosen]) return `ms:${LEGACY_CATEGORY_ICONS[chosen]}`;
+  const guess = GUESSES.find(([re]) => re.test(c))?.[1];
+  return `ms:${guess ?? (type === 'income' ? 'account_balance_wallet' : 'receipt_long')}`;
+}
+
+/**
+ * What a category's icon should be stored as: "ms:<shown name>" or "emoji:…", never an old drawn name,
+ * an alias, or nothing. Used to rewrite stored values once (src/db/category-icons.ts).
+ */
+export function canonicalCategoryIcon(name: string, kind: string, stored: string | null): string {
+  const icon = categoryIcon(name, kind, stored);
+  if (!icon.startsWith('ms:')) return icon;
+  const shown = canonicalSymbol(icon.slice(3));
+  return shown ? `ms:${shown}` : icon;
 }

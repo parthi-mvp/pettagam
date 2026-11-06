@@ -130,3 +130,20 @@ export function matchBank(text: string | null | undefined): Bank | null {
   }
   return best;
 }
+
+// SMS sender headers (the part after "AD-" / "VM-", before any "-S"/"-T") → bank id. Prefixes, so ICICIB and ICICIT both match.
+const SENDERS: [string, string][] = [
+  ['HDFCBK', 'hdfc'], ['ICICI', 'icici'], ['SBIINB', 'sbi'], ['SBIUPI', 'sbi'], ['SBMSMS', 'sbi'], ['ATMSBI', 'sbi'], ['CBSSBI', 'sbi'],
+  ['AXISBK', 'axis'], ['AXISMR', 'axis'], ['KOTAKB', 'kotak'], ['INDUSB', 'indusind'], ['YESBNK', 'yes'], ['IDFCFB', 'idfc'],
+  ['FEDBNK', 'federal'], ['CUBANK', 'cub'], ['KVBANK', 'kvb'], ['TMBANK', 'tmb'], ['RBLBNK', 'rbl'], ['AUBANK', 'au'],
+  ['CANBNK', 'canara'], ['BOBTXN', 'bob'], ['BOBSMS', 'bob'], ['PNBSMS', 'pnb'], ['UNIONB', 'union'], ['IOBCHN', 'iob'],
+  ['IOBBNK', 'iob'], ['INDBNK', 'indian'],
+];
+
+/** The bank behind an SMS sender ID ("AD-HDFCBK", "VM-ICICIT-S"), or null for anything else. */
+export function bankFromSender(address: string | null | undefined): Bank | null {
+  const parts = (address ?? '').toUpperCase().split('-');
+  const core = parts.find((p) => p.length >= 5) ?? '';
+  const hit = SENDERS.find(([prefix]) => core.startsWith(prefix));
+  return hit ? (BANKS.find((b) => b.id === hit[1]) ?? null) : null;
+}

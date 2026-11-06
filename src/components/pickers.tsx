@@ -1,20 +1,24 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 
 import type { BudgetStatus } from '@/budget/status';
 import { useLiveQuery } from '@/db/events';
 
-import { ACCOUNT_TYPE_LABELS, ACCOUNT_TYPE_ORDER, INVESTMENT_TYPE_LABELS, type Account, type AccountType, type InvestmentType } from '@/db/types';
+import { ACCOUNT_TYPE_LABELS, ACCOUNT_TYPE_ORDER, INVESTMENT_TYPE_LABELS, type Account, type AccountType, type CategoryKind, type InvestmentType } from '@/db/types';
 import { cn } from '@/lib/cn';
 import { haptic } from '@/lib/haptics';
 import { useThemeColors } from '@/theme/useThemeColor';
 
-import { categoryIcon, Icon, type IconName } from './icons';
+import { categoryIcon, Icon, type AnyIcon, type IconName } from './icons';
 import { BANK_KIND_LABEL, BANKS, matchBank, type Bank, type BankKind } from '@/catalog/banks';
 
 import { BankLogo } from './bank-logo';
 import { BudgetBar } from './budget-bar';
-import { PressableScale, Sheet, Text, TextInput, type SheetRef, IconTile, OptionRow } from './ui';
+import { CategoryCreateSheet, type CategoryCreateRef } from './category-create-sheet';
+import { FIELD_SURFACE, PressableScale, Sheet, Text, type SheetRef, IconTile, OptionRow } from './ui';
+import { SearchBox } from './ui/SearchBox';
+
+export { SearchBox };
 
 type Option = { value: string; label: string; color?: string; icon?: string | null };
 
@@ -29,7 +33,7 @@ function PickerRow({
 }: {
   label: string;
   text: string;
-  icon: IconName;
+  icon: AnyIcon;
   set: boolean;
   onPress: () => void;
   /** Replaces the icon tile (a bank logo). */
@@ -42,7 +46,7 @@ function PickerRow({
       accessibilityRole="button"
       accessibilityLabel={`${label}: ${set ? text : 'not set'}`}
       onPress={onPress}
-      className="h-10 flex-row items-center gap-2.5 rounded-[12px] bg-fill pl-1.5 pr-3">
+      className={`h-10 flex-row items-center gap-2.5 rounded-[12px] border pl-1.5 pr-3 ${FIELD_SURFACE}`}>
       {leading ?? (
         <View className="h-7 w-7 items-center justify-center rounded-[8px] bg-primary-soft">
           <Icon name={icon} size={16} color={set ? primary : subtle} />
@@ -161,28 +165,6 @@ const TOP_CATEGORIES = 4;
 const accountHit = (a: Account, q: string) =>
   !q || [a.name, a.institution, a.last4, a.card_last4, ACCOUNT_TYPE_LABELS[a.type]].some((t) => t?.toLowerCase().includes(q));
 
-function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
-  const [subtle] = useThemeColors(['fg-subtle'] as const);
-  return (
-    <View className="h-10 flex-row items-center gap-2 rounded-[12px] bg-fill px-3">
-      <Icon name="search" size={16} color={subtle} />
-      <TextInput
-        value={value}
-        onChangeText={onChange}
-        placeholder={placeholder}
-        accessibilityLabel={placeholder}
-        autoCorrect={false}
-        returnKeyType="search"
-        className="h-full min-w-0 flex-1"
-      />
-      {value ? (
-        <Pressable onPress={() => onChange('')} hitSlop={10} accessibilityRole="button" accessibilityLabel="Clear search">
-          <Icon name="close" size={16} color={subtle} />
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
 
 const NoMatch = ({ what, query }: { what: string; query: string }) => (
   <Text variant="small" align="center" className="py-2">
@@ -237,12 +219,20 @@ export function CategoryGrid({
   value,
   onPick,
   budgetOf,
+  createKind,
+  onCreated,
 }: {
   options: Option[];
   value: string | null;
   onPick: (v: string) => void;
   budgetOf?: (id: string) => BudgetStatus | undefined;
+  /** Enables "+ New" and "+ Add “…”": they open the new-category sheet for this kind. */
+  createKind?: CategoryKind;
+  /** After a category was created (and picked), e.g. to reload a list that isn't live. */
+  onCreated?: (id: string) => void;
 }) {
+  const createSheet = useRef<CategoryCreateRef>(null);
+  const [primary] = useThemeColors(['primary'] as const);
   const usage = useUsage('category_id');
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
@@ -250,12 +240,57 @@ export function CategoryGrid({
   const top = q || !long ? [] : mostUsed(options, (o) => o.value, usage, TOP_CATEGORIES);
   const rest = options.filter((o) => !top.includes(o) && (!q || o.label.toLowerCase().includes(q)));
   const tile = (o: Option) => <CategoryTile key={o.value} option={o} active={o.value === value} budget={budgetOf?.(o.value)} onPress={() => onPick(o.value)} />;
+  // Names are unique ignoring case: "food & dining" finds Food & Dining instead of offering a copy.
+  const typed = query.trim().replace(/\s+/g, ' ');
+  const canCreate = !!createKind && typed.length >= 2 && !options.some((o) => o.label.toLowerCase() === typed.toLowerCase());
+  const create = (name: string) => createKind && createSheet.current?.open(name, createKind);
+  const created = (id: string) => {
+    setQuery('');
+    onPick(id);
+    onCreated?.(id);
+  };
   return (
     <View className="gap-3">
-      {long ? <SearchBox value={query} onChange={setQuery} placeholder="Search categories" /> : null}
+      {long || createKind ? (
+        <SearchBox value={query} onChange={setQuery} placeholder={createKind ? 'Search or add a category' : 'Search categories'} />
+      ) : null}
       {top.length ? <TileSection title="Most used">{top.map(tile)}</TileSection> : null}
-      {rest.length ? <TileSection title={top.length ? 'All categories' : undefined}>{rest.map(tile)}</TileSection> : null}
-      {q && !rest.length ? <NoMatch what="category" query={query} /> : null}
+      {rest.length || (createKind && !q) ? (
+        <TileSection title={top.length ? 'All categories' : undefined}>
+          {rest.map(tile)}
+          {/* Says adding is possible before anyone types: opens the new-category sheet. */}
+          {createKind && !q ? (
+            <PressableScale
+              scaleTo={0.95}
+              accessibilityRole="button"
+              accessibilityLabel="New category"
+              onPress={() => create('')}
+              className="w-[23%] items-center justify-center gap-1 rounded-[12px] border-[1.5px] border-dashed border-line-strong px-1 py-2">
+              <View className="h-[30px] w-[30px] items-center justify-center">
+                <Icon name="plus" size={18} color={primary} strokeWidth={2.4} />
+              </View>
+              <Text variant="caption" align="center" tone="primary" weight="medium">
+                New
+              </Text>
+            </PressableScale>
+          ) : null}
+        </TileSection>
+      ) : null}
+      {q && !rest.length && !canCreate ? <NoMatch what="category" query={query} /> : null}
+      {canCreate ? (
+        <PressableScale
+          scaleTo={0.98}
+          accessibilityRole="button"
+          accessibilityLabel={`Add ${typed} as a new category`}
+          onPress={() => create(typed)}
+          className="h-11 flex-row items-center gap-2 rounded-[12px] border border-dashed border-line-strong px-3">
+          <Icon name="plus" size={16} color={primary} strokeWidth={2.4} />
+          <Text weight="medium" tone="primary" numberOfLines={1} className="min-w-0 flex-1">
+            {`Add “${typed}” as a category`}
+          </Text>
+        </PressableScale>
+      ) : null}
+      {createKind ? <CategoryCreateSheet ref={createSheet} onCreated={created} /> : null}
     </View>
   );
 }
@@ -319,7 +354,19 @@ export function AccountGrid({ accounts, value, onPick, digits }: { accounts: Acc
   );
 }
 
-export function CategoryPicker({ label = 'Category', options, value, onChange }: { label?: string; options: Option[]; value: string | null; onChange: (v: string) => void }) {
+export function CategoryPicker({
+  label = 'Category',
+  options,
+  value,
+  onChange,
+  createKind,
+}: {
+  label?: string;
+  options: Option[];
+  value: string | null;
+  onChange: (v: string) => void;
+  createKind?: CategoryKind;
+}) {
   const sheet = useRef<SheetRef>(null);
   const current = options.find((o) => o.value === value) ?? null;
 
@@ -342,7 +389,7 @@ export function CategoryPicker({ label = 'Category', options, value, onChange }:
 
       <Sheet ref={sheet} title={label} scrollable lazy>
         <View className="pb-4">
-          <CategoryGrid options={options} value={value} onPick={pick} />
+          <CategoryGrid options={options} value={value} onPick={pick} createKind={createKind} />
         </View>
       </Sheet>
     </View>

@@ -10,13 +10,21 @@ import { useLiveQuery } from '@/db/events';
 import { listAccounts, listCategories, tagTotals } from '@/db/repo';
 import { money } from '@/lib/format';
 import { STARTER_TAGS } from '@/lib/tags';
+import { networkById } from '@/catalog/networks';
 import { explainSms, type SmsExplain } from '@/sms/import';
-import { looksLikeTxn } from '@/sms/parser';
+import { looksLikeTxn, viaLabel } from '@/sms/parser';
 
 import { TagField } from './tag-field';
-import { Button, Divider, Field, OptionRow, Sheet, Text, type SheetRef } from './ui';
+import { Button, Field, PressableScale, Sheet, Text, type SheetRef } from './ui';
 
 const DAY = 86_400_000;
+
+/** A small heading between groups of lines. */
+const Section = ({ title }: { title: string }) => (
+  <Text variant="eyebrow" className="pt-1">
+    {title}
+  </Text>
+);
 
 /** One "label: value" line of the result. */
 const Line = ({ label, value, tone }: { label: string; value: string; tone?: 'brass' | 'subtle' }) => (
@@ -106,18 +114,47 @@ export function SmsLab() {
         ) : null}
       </View>
 
-      {result && !p ? <Text variant="small" tone="warning">The rules can’t read this as a transaction (OTP, promo, reminder, or an unknown format).</Text> : null}
+      {result && !p ? (
+        <View className="gap-2 rounded-input bg-fill p-3">
+          <Text variant="small" tone="warning">The rules can’t read this as a transaction.</Text>
+          <Line label="AI next?" value={result.looksLikeTxn ? 'Yes, if “Read bank SMS with AI” is on' : 'No (no amount, or an OTP / promo / reminder)'} />
+          <Line label="Sender bank" value={result.senderBank ?? '—'} tone="subtle" />
+          <Line label="Imported?" value={result.alreadyImported ? 'Yes, already' : 'No'} tone="subtle" />
+        </View>
+      ) : null}
 
       {p && sms ? (
         <View className="gap-2 rounded-input bg-fill p-3">
-          <Line label="Read as" value={`${p.atm ? 'ATM → Cash' : p.type === 'income' ? 'Income' : 'Expense'} · ${money(p.amount, true)}`} />
+          <Section title="Read as" />
+          <Line label="Type" value={p.atm ? 'ATM withdrawal' : p.cardPayment ? 'Card bill payment' : p.type === 'income' ? 'Income' : 'Expense'} />
+          <Line label="Amount" value={money(p.amount, true)} />
           <Line label="Merchant" value={p.merchant ?? '—'} />
-          <Line label="Account" value={`${p.last4 ? `••${p.last4} (${p.instrument})` : p.instrument} → ${account?.name ?? 'no match'}`} />
-          <Divider />
-          <Line label="Category" value={`${catName(result.categoryId)}${source ? ` · from ${source}` : ''}`} tone={result.categoryId ? 'brass' : 'subtle'} />
+          <Line label="Balance" value={p.balance != null ? money(p.balance, true) : '—'} tone="subtle" />
+
+          <Section title="Account" />
+          <Line label="Digits" value={p.last4 ? `••${p.last4} (${p.instrument === 'card' ? 'card' : 'account'})` : `none (${p.instrument})`} />
+          <Line
+            label="Matched"
+            value={account ? `${account.name} · by ${result.accountBy === 'sender' ? 'sender bank' : 'digits'}` : 'no match: pick it when importing'}
+            tone={account ? 'brass' : 'subtle'}
+          />
+          <Line label="Sender bank" value={result.senderBank ?? '—'} tone="subtle" />
+
+          <Section title="Category" />
+          <Line label="Picked" value={`${catName(result.categoryId)}${source ? ` · from ${source}` : ''}`} tone={result.categoryId ? 'brass' : 'subtle'} />
           <Line label="History" value={catName(result.learnedId)} tone="subtle" />
           <Line label="Rule" value={catName(result.ruleId)} tone="subtle" />
-          <Divider />
+
+          <Section title="Payment" />
+          <Line label="Method" value={viaLabel(p.via) ?? '—'} tone={p.via ? 'brass' : 'subtle'} />
+          <Line label="Network" value={networkById(result.network)?.name ?? '—'} tone="subtle" />
+          <Line label="Saved as" value={result.saveAs ?? '—'} tone={result.saveAs?.startsWith('skipped') ? 'subtle' : 'brass'} />
+
+          <Section title="Duplicates" />
+          <Line label="Imported?" value={result.alreadyImported ? 'Yes, already' : 'No'} tone="subtle" />
+          <Line label="Twin alert" value={result.paymentTwin ? 'Yes: same payment already recorded' : 'No'} tone="subtle" />
+
+          <Section title="Tags" />
           {/* The real tag field, keyed per message so its AI and history hints start fresh. */}
           <TagField
             key={`${sms.date}-${sms.body.length}`}
@@ -144,17 +181,25 @@ export function SmsLab() {
       <Sheet ref={picker} title="Pick an SMS" subtitle="Bank-looking messages from the last 90 days" scrollable lazy>
         <View className="gap-1.5 pb-4">
           {inbox.map((m) => (
-            <OptionRow
+            // Three lines of the message, then who sent it and when: enough to tell alerts apart.
+            <PressableScale
               key={m.id}
-              leading={null}
-              title={m.body.replace(/\s+/g, ' ').slice(0, 60)}
-              subtitle={`${m.address} · ${new Date(m.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`}
+              scaleTo={0.98}
+              accessibilityRole="button"
+              accessibilityLabel={`${m.address}: ${m.body}`}
               onPress={() => {
                 picker.current?.dismiss();
                 setBody(m.body);
                 run({ address: m.address, body: m.body, date: m.date });
               }}
-            />
+              className="gap-1 rounded-[12px] border border-line bg-surface px-3 py-2.5">
+              <Text variant="small" tone="default" numberOfLines={3}>
+                {m.body.replace(/\s+/g, ' ').trim()}
+              </Text>
+              <Text variant="caption">
+                {`${m.address} · ${new Date(m.date).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}`}
+              </Text>
+            </PressableScale>
           ))}
           {inbox.length === 0 ? <Text variant="small">No bank-looking messages in the last 90 days.</Text> : null}
         </View>

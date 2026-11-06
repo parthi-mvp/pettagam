@@ -11,12 +11,50 @@ export type ParsedSms = {
   categoryHint: string | null; // matches a default category name
   /** Cash taken out at an ATM: imported as a transfer to Cash, not as spending. */
   atm: boolean;
+  /** A credit card bill payment reaching the card: imported as a transfer from a bank, not as income. */
+  cardPayment: boolean;
+  /** How the money moved (UPI, card, NEFT…), shown on the entry. Null when the SMS doesn't say. */
+  via: Via | null;
   hash: string; // dedupe key
 };
 
 const ATM_RE = /\batm\b|cash withdrawal|cash wdl|\batm ?wdl\b|\bnfs\b|withdrawn at|cash w\/d/i;
 /** An ATM / cash withdrawal alert (a debit that moves money into your wallet, not spending). */
 export const isAtmWithdrawal = (body: string) => ATM_RE.test(body) && !/\b(?:deposit(?:ed)?|credited)\b/i.test(body);
+
+// "PAYMENT OF Rs. 341517.00 RECEIVED TOWARDS YOUR CREDIT CARD", "Payment of Rs 341517 was credited to your card ending 5267".
+const CARD_PAYMENT_RE = /\bpayment\b.{0,80}?\b(?:received|credited)\b.{0,40}?\b(?:credit\s*)?card\b/i;
+/** A bill payment arriving on a credit card (money moved from a bank, not earned). */
+export const isCardPayment = (body: string) => CARD_PAYMENT_RE.test(body.replace(/\s+/g, ' '));
+
+/** NEFT, IMPS, RTGS and net banking are one thing to a spender (bank to bank), so they share 'transfer'. */
+export type Via = 'upi' | 'card' | 'transfer' | 'atm' | 'autopay' | 'cheque';
+
+export const VIA_LABELS: Record<Via, string> = {
+  upi: 'UPI',
+  card: 'Card',
+  transfer: 'Bank transfer',
+  atm: 'ATM',
+  autopay: 'Auto-debit',
+  cheque: 'Cheque',
+};
+
+const LEGACY_TRANSFER = new Set(['neft', 'imps', 'rtgs', 'netbanking']);
+/** Label for a stored method; the separate rails a short-lived build saved read as "Bank transfer" too. */
+export const viaLabel = (via: string | null | undefined) =>
+  !via ? null : LEGACY_TRANSFER.has(via) ? VIA_LABELS.transfer : (VIA_LABELS[via as Via] ?? null);
+
+/** How an SMS says the money moved. First match wins: the specific rails before the generic "card". */
+export function paymentMethod(body: string, instrument: ParsedSms['instrument'], atm: boolean): Via | null {
+  const b = body.replace(/\s+/g, ' ');
+  if (atm) return 'atm';
+  if (/\bupi\b|\bvpa\b|@(?:ok\w+|ybl|ibl|axl|paytm|upi|apl|yapl)\b/i.test(b)) return 'upi';
+  if (/\b(?:imps|neft|rtgs)\b|net ?banking/i.test(b)) return 'transfer';
+  if (/\b(?:nach|ecs|e-?mandate|autopay|auto-?debit|standing instruction)\b/i.test(b)) return 'autopay';
+  if (/\b(?:cheque|chq)\b/i.test(b)) return 'cheque';
+  if (instrument === 'card') return 'card';
+  return null;
+}
 
 export type RawSms = { id?: string; address: string; body: string; date: number };
 
@@ -185,8 +223,9 @@ export function parseSms(sms: RawSms): ParsedSms | null {
 
   const { last4, instrument } = findLast4(body);
   const atm = type === 'expense' && isAtmWithdrawal(body);
-  const merchant = atm ? 'ATM withdrawal' : findMerchant(bodyNoBal, type);
-  const guess = atm ? null : guessCategory(`${merchant ?? ''} ${body}`);
+  const cardPayment = type === 'income' && isCardPayment(body);
+  const merchant = atm ? 'ATM withdrawal' : cardPayment ? 'Card bill payment' : findMerchant(bodyNoBal, type);
+  const guess = atm || cardPayment ? null : guessCategory(`${merchant ?? ''} ${body}`);
   // Don't tag an expense with an income category or vice-versa.
   const categoryHint = guess && guess.kind === type ? guess.name : null;
 
@@ -199,6 +238,8 @@ export function parseSms(sms: RawSms): ParsedSms | null {
     balance,
     categoryHint,
     atm,
+    cardPayment,
+    via: cardPayment ? null : paymentMethod(body, instrument, atm),
     hash: smsHash(sms),
   };
 }

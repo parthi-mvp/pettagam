@@ -40,7 +40,7 @@ export default function SyncSettings() {
 
   return (
     <Screen>
-      <FormSection title="Sync">
+      <FormSection card title="Sync">
         <Text variant="label" tone={sync.state === 'error' ? 'danger' : 'default'}>
           {STATE_LABEL[sync.state]}
         </Text>
@@ -53,6 +53,12 @@ export default function SyncSettings() {
             {sync.error}
           </Text>
         ) : null}
+        {/* The raw server error, for development builds only. */}
+        {__DEV__ && sync.detail ? (
+          <Text variant="caption" selectable>
+            {sync.detail}
+          </Text>
+        ) : null}
         <Button title={sync.state === 'syncing' ? 'Syncing…' : 'Sync now'} disabled={sync.state === 'syncing'} onPress={syncButton} />
         <Text variant="caption">
           Your data is stored in your Pettagam account and cached on this phone, so the app works offline. Edits upload a few seconds after
@@ -60,7 +66,7 @@ export default function SyncSettings() {
         </Text>
       </FormSection>
 
-      <FormSection title="Moving from Google Drive">
+      <FormSection card title="Moving from Google Drive">
         <Text variant="small">Used the earlier version with Drive sync? Import that backup once into your account.</Text>
         <Button variant="secondary" title={busy ? 'Importing…' : 'Import from Google Drive'} disabled={busy} onPress={driveImport} />
       </FormSection>

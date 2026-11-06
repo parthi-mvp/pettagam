@@ -7,7 +7,7 @@ import { Alert, View } from 'react-native';
 
 import { aiReady, useAi } from '@/ai/client';
 import { useAuth } from '@/auth/session';
-import { Button, Card, Divider, GroupLabel, Header, Row, Screen, Text } from '@/components/ui';
+import { Button, Card, Divider, GroupLabel, Row, Screen, Text } from '@/components/ui';
 import { getSyncStatus, onSyncStatus, refreshPending, type SyncStatus } from '@/sync/neon-sync';
 import { paletteById } from '@/theme/palettes';
 import { LOCK_AFTER, useAppLock } from '@/security/app-lock';
@@ -53,8 +53,8 @@ export default function More() {
   const name = auth.user?.name?.trim() || auth.user?.email?.split('@')[0] || 'You';
 
   return (
-    <Screen tab>
-      <Header title="More" />
+    // A full page (back button, no tab bar), opened from the More button in the tab bar.
+    <Screen>
 
       {/* Who's signed in */}
       <Card className="flex-row items-center gap-3">

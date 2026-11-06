@@ -7,7 +7,7 @@ import { seedCategories } from '@/db/schema';
 import { SYNCED_TABLES, type TableName } from '@/db/types';
 
 import { isRowRejection, rowsSince, upsertRows } from './data-api';
-import { fromServer, shouldApplyRemote, toServer, uploadRows } from './wire';
+import { describeSyncError, fromServer, shouldApplyRemote, toServer, uploadRows } from './wire';
 
 /**
  * Option B: Neon is the source of truth; SQLite on the phone is an offline cache.
@@ -30,10 +30,13 @@ export type SyncStatus = {
   state: 'idle' | 'syncing' | 'error' | 'offline';
   pending: number;
   lastSyncAt: number | null;
+  /** A plain sentence for people (describeSyncError); null when fine or just offline. */
   error: string | null;
+  /** The raw error, for development builds only (Sync settings shows it under __DEV__). */
+  detail: string | null;
 };
 
-let status: SyncStatus = { state: 'idle', pending: 0, lastSyncAt: null, error: null };
+let status: SyncStatus = { state: 'idle', pending: 0, lastSyncAt: null, error: null, detail: null };
 const listeners = new Set<(s: SyncStatus) => void>();
 
 export const getSyncStatus = () => status;
@@ -140,7 +143,7 @@ let running: Promise<void> | null = null;
 export function syncNow(db: SQLiteDatabase): Promise<void> {
   if (running) return running;
   running = (async () => {
-    setStatus({ state: 'syncing', error: null });
+    setStatus({ state: 'syncing', error: null, detail: null });
     try {
       // Download first, then upload, and let each run even if the other fails: a rejected upload
       // (e.g. the server's Data API not knowing a new column yet) must not keep the user's data off
@@ -162,8 +165,8 @@ export function syncNow(db: SQLiteDatabase): Promise<void> {
       setStatus({ state: 'idle', lastSyncAt: at, pending: await pendingCount(db) });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      const offline = /network request failed|failed to fetch|network/i.test(msg);
-      setStatus({ state: offline ? 'offline' : 'error', error: offline ? null : msg, pending: await pendingCount(db) });
+      const { offline, message } = describeSyncError(msg);
+      setStatus({ state: offline ? 'offline' : 'error', error: message, detail: offline ? null : msg, pending: await pendingCount(db) });
       throw e;
     }
   })().finally(() => {
@@ -199,6 +202,6 @@ export async function wipeLocalData(db: SQLiteDatabase) {
       "DELETE FROM settings WHERE key LIKE 'rev_%' OR key IN ('cache_owner', 'last_sync_at', 'sms_cursor')"
     );
   });
-  setStatus({ pending: 0, lastSyncAt: null, error: null, state: 'idle' });
+  setStatus({ pending: 0, lastSyncAt: null, error: null, detail: null, state: 'idle' });
   emitChange('*');
 }

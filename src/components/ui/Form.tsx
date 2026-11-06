@@ -9,6 +9,7 @@ import { useThemeColor } from '@/theme/useThemeColor';
 import { Icon } from '../icons';
 import { PressableScale } from './PressableScale';
 import { Text } from './Text';
+import { FIELD_SURFACE } from './TextField';
 
 /**
  * Date picker that looks like a Field. Value is the same "DD/MM/YYYY" string the forms already keep
@@ -28,7 +29,7 @@ export function DateField({ label, value, onChange, hint }: { label: string; val
     <View className="gap-1.5">
       <Text variant="small">{label}</Text>
       {Platform.OS === 'ios' ? (
-        <View className="h-10 flex-row items-center justify-between rounded-[12px] bg-fill pl-3 pr-1.5">
+        <View className={`h-10 flex-row items-center justify-between rounded-[12px] border pl-3 pr-1.5 ${FIELD_SURFACE}`}>
           <Text tone={ms ? 'default' : 'subtle'}>{ms ? dateLabel(ms) : 'Not set'}</Text>
           <DateTimePicker value={ms ? new Date(ms) : new Date(2000, 0, 1)} mode="date" display="compact" onChange={pick} accentColor={ink} />
         </View>
@@ -38,7 +39,7 @@ export function DateField({ label, value, onChange, hint }: { label: string; val
           accessibilityRole="button"
           accessibilityLabel={`${label}: ${ms ? dateLabel(ms) : 'not set'}`}
           onPress={() => openAndroidPicker(ms, pick)}
-          className="h-10 flex-row items-center justify-between rounded-[12px] bg-fill px-3">
+          className={`h-10 flex-row items-center justify-between rounded-[12px] border px-3 ${FIELD_SURFACE}`}>
           <Text tone={ms ? 'default' : 'subtle'}>{ms ? dateLabel(ms) : 'Pick a date'}</Text>
           <Icon name="calendar" size={18} color={muted} />
         </PressableScale>

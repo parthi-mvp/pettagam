@@ -2,9 +2,11 @@ import { router, Stack, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useSQLiteContext } from 'expo-sqlite';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useRef, useState } from 'react';
-import { Alert, Platform, Pressable, View } from 'react-native';
+import { startTransition, useEffect, useRef, useState } from 'react';
+import { Alert, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
+import Animated, { Easing, FadeIn, ReduceMotion, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import { useUniwind } from 'uniwind';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { toast } from 'sonner-native';
 
@@ -13,17 +15,18 @@ import { aiDraftFromImage, aiDraftTransaction, aiSuggestCategoryAndTags } from '
 import type { AiDraft } from '@/ai/parse';
 import { Icon } from '@/components/icons';
 import { AccountPicker, CategoryGrid, CategoryTile, useUsage } from '@/components/pickers';
-import { AmountInput, BackButton, OptionRow, Button, Card, DateField, Field, GroupLabel, HeroBackdrop, IconTile, PressableScale, Sheet, StickyFooter, Text, type SheetRef } from '@/components/ui';
+import { AmountInput, BackButton, OptionRow, Button, Card, Chips, DateField, Field, GroupLabel, HeroBackdrop, IconTile, PressableScale, Sheet, StickyFooter, Text, type SheetRef } from '@/components/ui';
 import { useLiveQuery } from '@/db/events';
 import { getById, listAccounts, listCategories, save, softDelete, tagTotals } from '@/db/repo';
-import type { CategoryKind, Transaction, TxnType } from '@/db/types';
-import { cn } from '@/lib/cn';
+import type { AccountType, CategoryKind, Transaction, TxnType } from '@/db/types';
+import { VIA_LABELS, type Via } from '@/sms/parser';
 import { money, parseDate, toInputDate, monthRange } from '@/lib/format';
 import { budgetAlert } from '@/budget/alert';
 import { budgetOverview } from '@/budget/queries';
 import { haptic } from '@/lib/haptics';
 import { parseTags, STARTER_TAGS, tagsColumn } from '@/lib/tags';
 import { TagField } from '@/components/tag-field';
+import { AiThinking } from '@/components/ai-thinking';
 import { pauseAppLock, resumeAppLock } from '@/security/app-lock';
 import { useThemeColors } from '@/theme/useThemeColor';
 
@@ -32,6 +35,30 @@ const TYPES: { value: TxnType; label: string }[] = [
   { value: 'income', label: 'Income' },
   { value: 'transfer', label: 'Transfer' },
 ];
+/**
+ * "Paid via" choices for an account: how money can move through it. Cash, wallets and people have none
+ * (the account already says it). ATM isn't offered: a withdrawal is a transfer to Cash.
+ */
+const VIA_CHOICES: Partial<Record<AccountType, Via[]>> = {
+  bank: ['upi', 'card', 'transfer', 'cheque', 'autopay'],
+  overdraft: ['upi', 'transfer', 'cheque'],
+  credit_card: ['card', 'upi'],
+  pay_later: ['upi', 'card'],
+};
+
+/**
+ * Header gradient per type (top → middle → bottom). Expense keeps the colour theme's; income is green
+ * (money in, as everywhere in the app) and transfers a neutral slate, so the type reads at a glance.
+ * Dark in both modes, like the theme's header, so the white text stays readable.
+ */
+/** One switch between Expense / Income / Transfer: header crossfade, pill slide, content fade. */
+const SWITCH_MS = 260;
+
+const HERO_TINT: Partial<Record<TxnType, readonly [string, string, string]>> = {
+  income: ['#1f7a4d', '#155c3a', '#0b3a24'],
+  transfer: ['#3b4f73', '#29395a', '#172238'],
+};
+
 /** Tiles shown before "More": the user's most-used categories. */
 const GRID = 8;
 
@@ -48,6 +75,7 @@ export default function TransactionForm() {
   const [primary, chevron] = useThemeColors(['primary', 'fg-subtle'] as const);
 
   const [type, setType] = useState<TxnType>(params.type ?? 'expense');
+  const typeIndex = Math.max(0, TYPES.findIndex((o) => o.value === type));
   const [amount, setAmount] = useState('');
   const [chosenAccountId, setAccountId] = useState<string | null>(params.accountId ?? null);
   const [toAccountId, setToAccountId] = useState<string | null>(null);
@@ -56,6 +84,16 @@ export default function TransactionForm() {
   const [merchant, setMerchant] = useState('');
   const [note, setNote] = useState('');
   const [tags, setTags] = useState<string[]>([]);
+  // Scrolled until the amount header is gone under the status bar: the strip takes the page colour.
+  const [scrolled, setScrolled] = useState(false);
+  const [heroHeight, setHeroHeight] = useState(0);
+  const [tabWidth, setTabWidth] = useState(0);
+  const { theme } = useUniwind();
+  // While the tag box has focus the sticky Save bar steps aside, so the keyboard + bar don't cover suggestions.
+  const [tagFocused, setTagFocused] = useState(false);
+  // How it was paid. Until the user picks, it follows the method they use most on this account.
+  const [via, setVia] = useState<Via | null>(null);
+  const [viaTouched, setViaTouched] = useState(false);
   const [aiTags, setAiTags] = useState<string[]>([]);
   const { data: usedTags } = useLiveQuery(tagTotals, ['transactions']);
   const [existing, setExisting] = useState<Transaction | null>(null);
@@ -80,12 +118,30 @@ export default function TransactionForm() {
       setMerchant(t.merchant ?? '');
       setNote(t.note ?? '');
       setTags(parseTags(t.tags));
+      setVia(t.via as Via | null);
+      setViaTouched(true);
     });
   }, [db, params.id]);
 
   // Default to the first account until the user picks one.
   const accountId = chosenAccountId ?? accounts?.[0]?.id ?? null;
   const account = accounts?.find((a) => a.id === accountId);
+  const viaChoices = (account && VIA_CHOICES[account.type]) ?? [];
+  const { data: usualVia } = useLiveQuery(
+    (d) =>
+      accountId
+        ? d.getFirstAsync<{ via: Via }>(
+            'SELECT via FROM transactions WHERE deleted = 0 AND account_id = ? AND via IS NOT NULL GROUP BY via ORDER BY COUNT(*) DESC LIMIT 1',
+            [accountId]
+          )
+        : Promise.resolve(null),
+    ['transactions'],
+    [accountId]
+  );
+  const shownVia = viaTouched ? via : (usualVia?.via ?? null);
+  // An imported method the chips don't offer (ATM, RTGS) is kept as it is, not dropped on save.
+  const keptVia = existing?.via && !viaChoices.includes(existing.via as Via) && shownVia === existing.via ? (existing.via as Via) : null;
+  const effectiveVia = shownVia && viaChoices.includes(shownVia) ? shownVia : keptVia;
   const amt = Number(amount.replace(/,/g, '')) || 0;
   const noun = type === 'income' ? 'income' : type === 'transfer' ? 'transfer' : 'expense';
 
@@ -109,6 +165,7 @@ export default function TransactionForm() {
       merchant: merchant.trim() || null,
       note: note.trim() || null,
       tags: tagsColumn(tags),
+      via: effectiveVia,
       source: existing?.source ?? 'manual',
       sms_hash: existing?.sms_hash ?? null,
     });
@@ -235,21 +292,77 @@ export default function TransactionForm() {
     if (fromSheet) catSheet.current?.dismiss();
   };
 
+  // The pill runs on the UI thread from the tap itself: it starts moving before React re-renders the form
+  // for the new type (that render took a few ms and held the pill), and keeps going while it happens.
+  const pillIndex = useSharedValue(typeIndex);
+  const pillTarget = useRef(typeIndex);
+  useEffect(() => {
+    // A type set from outside a tap (editing an entry, AI fill): jump there without sliding.
+    if (pillTarget.current !== typeIndex) {
+      pillTarget.current = typeIndex;
+      pillIndex.set(typeIndex);
+    }
+  }, [typeIndex, pillIndex]);
+  const pillStyle = useAnimatedStyle(() => ({ transform: [{ translateX: pillIndex.get() * tabWidth }] }), [tabWidth]);
+  const pillLabelsStyle = useAnimatedStyle(() => ({ transform: [{ translateX: -pillIndex.get() * tabWidth }] }), [tabWidth]);
+
   const pickType = (t: TxnType) => {
     if (t === type) return;
     haptic.selection();
-    setType(t);
-    setCategoryId(null);
+    const i = TYPES.findIndex((o) => o.value === t);
+    pillTarget.current = i;
+    pillIndex.set(withTiming(i, { duration: SWITCH_MS, easing: Easing.bezier(0.77, 0, 0.175, 1), reduceMotion: ReduceMotion.System }));
+    // The heavier re-render (grids, lists) is low priority, so it doesn't compete with the slide.
+    startTransition(() => {
+      setType(t);
+      setCategoryId(null);
+    });
   };
 
   return (
     <View className="flex-1 bg-canvas">
       <Stack.Screen options={{ headerShown: false }} />
-      <StatusBar style="light" />
-      <KeyboardAwareScrollView bottomOffset={96} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={{ paddingBottom: 24 }}>
+      {/* Light icons on the dark header; dark ones once the light page colour is behind the status bar. */}
+      <StatusBar style={scrolled && theme === 'light' ? 'dark' : 'light'} />
+      <KeyboardAwareScrollView
+        // Only crossing the line updates state (not every frame): the status-bar strip fades in once scrolled.
+        onScroll={(e) => {
+          const past = heroHeight > 0 && e.nativeEvent.contentOffset.y > heroHeight - insets.top - 8;
+          if (past !== scrolled) setScrolled(past);
+        }}
+        scrollEventThrottle={16}
+        bottomOffset={96} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={{ paddingBottom: 24 }}>
         {/* Hero: what kind, and how much. */}
-        <View className="overflow-hidden bg-hero px-5 pb-12" style={{ paddingTop: Platform.OS === 'ios' ? 14 : insets.top + 10 }}>
-          <HeroBackdrop />
+        <View
+          className="overflow-hidden bg-hero px-5 pb-12"
+          style={{ paddingTop: Platform.OS === 'ios' ? 14 : insets.top + 10 }}
+          onLayout={(e) => setHeroHeight(e.nativeEvent.layout.height)}>
+          {/* All three backdrops stay drawn. The picked one comes to the top and fades in; the others drop out
+              only after it has covered them (delay), so a switch never shows a gap or a flat flash. They sit in
+              their own container so that zIndex only orders them, never above the header's content. */}
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+          {TYPES.map((o) => {
+            const on = o.value === type;
+            return (
+              <Animated.View
+                key={o.value}
+                pointerEvents="none"
+                style={[
+                  StyleSheet.absoluteFill,
+                  {
+                    zIndex: on ? 1 : 0,
+                    opacity: on ? 1 : 0,
+                    transitionProperty: 'opacity',
+                    transitionDuration: on ? SWITCH_MS : 0,
+                    transitionDelay: on ? 0 : SWITCH_MS,
+                    transitionTimingFunction: 'ease-in-out',
+                  },
+                ]}>
+                <HeroBackdrop colors={HERO_TINT[o.value]} />
+              </Animated.View>
+            );
+          })}
+          </View>
           <View className="h-10 flex-row items-center justify-between">
             <BackButton tone="hero" />
             <Text variant="heading" tone="onHero" accessibilityRole="header">
@@ -258,22 +371,42 @@ export default function TransactionForm() {
             <View className="w-10" />
           </View>
 
-          <View className="mt-4 h-9 flex-row rounded-full bg-white/10 p-1" accessibilityRole="tablist">
-            {TYPES.map((o) => {
-              const active = o.value === type;
-              return (
-                <Pressable
-                  key={o.value}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected: active }}
-                  onPress={() => pickType(o.value)}
-                  className={cn('flex-1 items-center justify-center rounded-full', active && 'bg-white')}>
-                  <Text variant="label" className={active ? 'text-hero' : 'text-on-hero-soft'}>
-                    {o.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
+          {/* Type switch: a white pill slides to the picked tab. Inside it, the dark labels move the other way by
+              the same amount, so the pill reveals the dark label as it passes: no label ever flips colour early. */}
+          <View
+            className="mt-4 h-9 flex-row rounded-full bg-white/10 p-1"
+            accessibilityRole="tablist"
+            onLayout={(e) => setTabWidth((e.nativeEvent.layout.width - 8) / TYPES.length)}>
+            {TYPES.map((o) => (
+              <Pressable
+                key={o.value}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: o.value === type }}
+                onPress={() => pickType(o.value)}
+                className="flex-1 items-center justify-center">
+                <Text variant="label" className="text-on-hero-soft">
+                  {o.label}
+                </Text>
+              </Pressable>
+            ))}
+            {tabWidth ? (
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  { position: 'absolute', top: 4, bottom: 4, left: 4, width: tabWidth, borderRadius: 999, overflow: 'hidden', backgroundColor: '#ffffff' },
+                  pillStyle,
+                ]}>
+                <Animated.View style={[{ flexDirection: 'row', height: '100%', width: tabWidth * TYPES.length }, pillLabelsStyle]}>
+                  {TYPES.map((o) => (
+                    <View key={o.value} className="items-center justify-center" style={{ width: tabWidth }}>
+                      <Text variant="label" className="text-hero">
+                        {o.label}
+                      </Text>
+                    </View>
+                  ))}
+                </Animated.View>
+              </Animated.View>
+            ) : null}
           </View>
 
           <Text variant="small" align="center" className="mt-6 text-on-hero-soft">
@@ -306,16 +439,20 @@ export default function TransactionForm() {
           ) : null}
 
           {type !== 'transfer' ? (
-            <View className="gap-2">
+            <Animated.View key={`cat-${type}`} entering={FadeIn.duration(SWITCH_MS)} className="gap-2">
               <View className="flex-row items-center justify-between">
                 <GroupLabel>Category</GroupLabel>
                 {ai && (merchant.trim() || note.trim()) ? (
-                  <Pressable onPress={suggestCategory} disabled={suggesting} hitSlop={10} className="flex-row items-center gap-1 active:opacity-60">
-                    <Icon name="bulb" size={14} color={primary} />
-                    <Text variant="small" weight="medium" tone="primary">
-                      {suggesting ? 'Thinking…' : 'Suggest category & tags'}
-                    </Text>
-                  </Pressable>
+                  suggesting ? (
+                    <AiThinking />
+                  ) : (
+                    <Pressable onPress={suggestCategory} hitSlop={10} className="flex-row items-center gap-1 active:opacity-60">
+                      <Icon name="bulb" size={14} color={primary} />
+                      <Text variant="small" weight="medium" tone="primary">
+                        Suggest category & tags
+                      </Text>
+                    </Pressable>
+                  )
                 ) : null}
               </View>
               <View className="flex-row flex-wrap gap-2">
@@ -336,7 +473,7 @@ export default function TransactionForm() {
                   </PressableScale>
                 ) : null}
               </View>
-            </View>
+            </Animated.View>
           ) : null}
 
           {/* When and where from. */}
@@ -344,10 +481,10 @@ export default function TransactionForm() {
             {(accounts ?? []).length === 0 ? (
               <Text variant="muted">No accounts yet. Add one from More → Accounts.</Text>
             ) : type === 'transfer' ? (
-              <>
+              <Animated.View entering={FadeIn.duration(SWITCH_MS)} className="gap-3">
                 <AccountPicker label="From" accounts={accounts ?? []} value={accountId} onChange={setAccountId} />
                 <AccountPicker label="To (e.g. the card being paid)" accounts={accounts ?? []} value={toAccountId} onChange={setToAccountId} />
-              </>
+              </Animated.View>
             ) : null}
             <View className="flex-row gap-3">
               <View className="flex-1">
@@ -359,6 +496,17 @@ export default function TransactionForm() {
                 </View>
               ) : null}
             </View>
+            {viaChoices.length ? (
+              <Chips<Via>
+                label={type === 'income' ? 'Received via' : type === 'transfer' ? 'Moved via' : 'Paid via'}
+                options={viaChoices.map((v) => ({ value: v, label: VIA_LABELS[v] }))}
+                value={effectiveVia}
+                onChange={(v) => {
+                  setViaTouched(true);
+                  setVia(v === effectiveVia ? null : v); // tap the picked one again to clear it
+                }}
+              />
+            ) : null}
             {type !== 'transfer' ? (
               <Field
                 label={type === 'income' ? 'From / payer' : 'Merchant / payee'}
@@ -372,6 +520,7 @@ export default function TransactionForm() {
               value={tags}
               onChange={setTags}
               aiHints={aiTags}
+              onFocusChange={setTagFocused}
               aiSuggest={
                 ai
                   ? async (tagNames) => {
@@ -424,14 +573,30 @@ export default function TransactionForm() {
           </View>
         </View>
       </KeyboardAwareScrollView>
+      {tagFocused ? null : (
       <StickyFooter>
         <Button size="lg" title={`${existing ? 'Save changes' : `Save ${noun}`}${amt ? ` · ${money(amt)}` : ''}`} onPress={onSave} />
       </StickyFooter>
+      )}
       {/* Android draws this screen edge to edge: keep scrolled content out from under the status bar. */}
-      {Platform.OS === 'ios' ? null : <View pointerEvents="none" className="absolute inset-x-0 top-0 bg-hero" style={{ height: insets.top }} />}
+      {/* Behind the status bar (Android): nothing while the header is in view, so its background runs up under
+          the status bar; once the header has scrolled away, the page colour fades in so content never shows through. */}
+      {Platform.OS === 'ios' ? null : (
+        <Animated.View
+          pointerEvents="none"
+          className="absolute inset-x-0 top-0 bg-canvas"
+          style={{ height: insets.top, opacity: scrolled ? 1 : 0, transitionProperty: 'opacity', transitionDuration: 150 }}
+        />
+      )}
 
       <Sheet ref={catSheet} title={type === 'income' ? 'Income category' : 'Expense category'} scrollable lazy>
-        <CategoryGrid options={kindCats} value={categoryId} onPick={(id) => pickCategory(id, true)} budgetOf={budgetOf} />
+        <CategoryGrid
+          options={kindCats}
+          value={categoryId}
+          onPick={(id) => pickCategory(id, true)}
+          createKind={type === 'income' ? 'income' : 'expense'}
+          budgetOf={budgetOf}
+        />
         <Pressable
           onPress={() => {
             catSheet.current?.dismiss();

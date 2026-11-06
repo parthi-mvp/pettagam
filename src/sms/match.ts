@@ -41,3 +41,18 @@ export function learnedCategory(history: PastCategory[], merchant: string | null
   }
   return prefix;
 }
+
+/**
+ * Where a card bill was most likely paid from: a bank account at the card's own bank, else the first
+ * bank account. The review card shows it; the user can deselect. Undefined when there's no bank account.
+ */
+export function paymentSource(accounts: Account[], card: Account): Account | undefined {
+  const banks = accounts.filter((a) => a.type === 'bank' || a.type === 'overdraft');
+  const bankWord = (a: Account) => a.institution?.trim().toLowerCase().split(/\s+/)[0] ?? '';
+  return banks.find((b) => bankWord(b) !== '' && bankWord(b) === bankWord(card)) ?? banks[0];
+}
+
+/** Banks often send two alerts for one card payment (on paying, and when it posts): same amount within 3 days. */
+export const PAYMENT_TWIN_MS = 3 * 86_400_000;
+export const isPaymentTwin = (seen: { amount: number; date: number }[], amount: number, date: number) =>
+  seen.some((s) => Math.abs(s.amount - amount) < 0.005 && Math.abs(s.date - date) <= PAYMENT_TWIN_MS);

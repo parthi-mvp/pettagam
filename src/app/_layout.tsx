@@ -6,7 +6,7 @@ import { SQLiteProvider, type SQLiteDatabase } from 'expo-sqlite';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaListener } from 'react-native-safe-area-context';
-import { Uniwind, useUniwind } from 'uniwind';
+import { useUniwind } from 'uniwind';
 
 import '../global.css';
 
@@ -14,10 +14,12 @@ import { AuthProvider, useAuth } from '@/auth/session';
 import { AppToaster } from '@/components/ui';
 import { StackHeader } from '@/components/ui/StackHeader';
 import { startupFonts } from '@/constants/fonts';
+import { normalizeCategoryIcons } from '@/db/category-icons';
 import { migrate } from '@/db/schema';
 import { useTheme } from '@/hooks/use-theme';
 import { AutoSync } from '@/sync/auto-sync';
 import { AppLockGate } from '@/components/app-lock-gate';
+import { OfflineFrame, setDeviceInsets } from '@/components/offline-banner';
 import { useWelcomeSeen } from '@/onboarding/welcome-seen';
 import { restoreAppLock } from '@/security/app-lock';
 import { restoreThemePreference, useThemePreference } from '@/theme/themePreference';
@@ -35,6 +37,8 @@ restoreAppLock();
 async function initDatabase(db: SQLiteDatabase) {
   try {
     await migrate(db);
+    // Old category icons → the one icon set, stored (and synced) once; a no-op after that.
+    await normalizeCategoryIcons(db).catch((e) => console.warn('category icons', e));
   } finally {
     SplashScreen.hideAsync();
   }
@@ -53,8 +57,8 @@ export default function RootLayout() {
     colors: { ...base.colors, primary: c.tint, background: c.background, card: c.background, text: c.text, border: c.border },
   };
   return (
-    // Insets feed Uniwind's safe-area classes (pt-safe, pb-safe…).
-    <SafeAreaListener onChange={({ insets }) => Uniwind.updateInsets(insets)}>
+    // Insets feed Uniwind's safe-area classes (pt-safe, pb-safe…), via the offline bar (it may cover the top).
+    <SafeAreaListener onChange={({ insets }) => setDeviceInsets(insets)}>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <KeyboardProvider>
         <ThemeProvider value={navTheme}>
@@ -83,6 +87,8 @@ function Routes() {
   if (status === 'loading') return null;
   return (
     <>
+    {/* While offline, a bar at the top pushes every screen down (see OfflineFrame). */}
+    <OfflineFrame>
     <Stack
       // A JS header (centred title, the app's round back button): the native one crashes on a theme switch (see StackHeader).
       screenOptions={{ header: (props) => <StackHeader {...props} /> }}>
@@ -95,6 +101,7 @@ function Routes() {
         <Stack.Screen name="sms-import" options={{ title: 'Import from SMS' }} />
         <Stack.Screen name="ask" options={{ title: 'Ask your money' }} />
         <Stack.Screen name="ai-tidy" options={{ title: 'Tidy up with AI' }} />
+        <Stack.Screen name="more" options={{ title: 'More' }} />
         <Stack.Screen name="accounts" options={{ title: 'Accounts' }} />
         <Stack.Screen name="reports" options={{ title: 'Reports' }} />
         <Stack.Screen name="categories" options={{ title: 'Categories' }} />
@@ -109,7 +116,7 @@ function Routes() {
         <Stack.Screen name="settings/sms" options={{ title: 'Bank SMS alerts' }} />
         <Stack.Screen name="settings/developer" options={{ title: 'Developer tools' }} />
         <Stack.Screen name="settings/sms-card-test" options={{ title: 'New-SMS card' }} />
-        <Stack.Screen name="settings/sms-lab" options={{ title: 'Category & tag tester' }} />
+        <Stack.Screen name="settings/sms-lab" options={{ title: 'SMS tester' }} />
         <Stack.Screen name="settings/security" options={{ title: 'App lock' }} />
       </Stack.Protected>
       {/* Signed out: the welcome screens come first, every time; sign-in is reached from them. */}
@@ -120,7 +127,8 @@ function Routes() {
         <Stack.Screen name="sign-in" options={{ headerShown: false }} />
       </Stack.Protected>
     </Stack>
-    {/* Above every screen: the fingerprint / face lock (More → Settings → App lock). */}
+    </OfflineFrame>
+    {/* Above every screen: the fingerprint / face lock (More → Settings → App lock), covering everything. */}
     <AppLockGate signedIn={signedIn} />
     </>
   );
