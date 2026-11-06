@@ -18,6 +18,10 @@ export const LOG_PREFIX = 'log-';
  */
 export const VAULT_FILE = 'pettagam-vault-key.json';
 
+/** The Drive search for Pettagam's files (all, or changed after `since`, RFC 3339). */
+export const listQuery = (since?: string) =>
+  `(name contains '${SNAPSHOT_PREFIX}' or name contains '${LOG_PREFIX}') and trashed = false${since ? ` and modifiedTime > '${since}'` : ''}`;
+
 export const snapshotName = (device: string) => `${SNAPSHOT_PREFIX}${device}.json`;
 export const logName = (device: string, seq: number) => `${LOG_PREFIX}${device}-${String(seq).padStart(8, '0')}.json`;
 

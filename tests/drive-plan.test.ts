@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { groupDevices, logName, parseName, planPull, snapshotName, staleDevices, type RemoteFile } from '../src/sync/drive-plan.ts';
+import { groupDevices, listQuery, logName, parseName, planPull, snapshotName, staleDevices, type RemoteFile } from '../src/sync/drive-plan.ts';
 
 let n = 0;
 const file = (name: string, seq?: number, t = '2026-11-06T10:00:00.000Z'): RemoteFile => ({
@@ -65,4 +65,13 @@ test('staleDevices: only long-unseen phones whose every change is already here, 
     ['a']
   );
   assert.deepEqual(staleDevices(ds, 'me', { a: 9 }, new Date('2026-02-01T00:00:00.000Z').getTime()), [], 'not stale yet');
+});
+
+test('listQuery: a well-formed Drive search (balanced quotes and brackets)', () => {
+  for (const q of [listQuery(), listQuery('2026-11-06T10:00:00.000Z')]) {
+    assert.equal((q.match(/'/g) ?? []).length % 2, 0, q);
+    assert.equal((q.match(/\(/g) ?? []).length, (q.match(/\)/g) ?? []).length, q);
+  }
+  assert.equal(listQuery(), "(name contains 'pettagam-' or name contains 'log-') and trashed = false");
+  assert.ok(listQuery('2026-11-06T10:00:00.000Z').endsWith(" and modifiedTime > '2026-11-06T10:00:00.000Z'"));
 });

@@ -1,6 +1,6 @@
 import { GoogleSignin, isSuccessResponse } from '@react-native-google-signin/google-signin';
 
-import { LOG_PREFIX, SNAPSHOT_PREFIX, type RemoteFile as DriveFile } from './drive-plan';
+import { listQuery, type RemoteFile as DriveFile } from './drive-plan';
 
 // drive.appdata = a hidden, app-private folder in the user's own Google Drive.
 // The app can't see the user's other files and nothing goes to any third-party server.
@@ -62,8 +62,7 @@ export async function listFiles(since?: string): Promise<DriveFile[]> {
   const out: DriveFile[] = [];
   let page = '';
   do {
-    const filter = `(name contains '${SNAPSHOT_PREFIX}' or name contains '${LOG_PREFIX}'')${since ? ` and modifiedTime > '${since}'` : ''}`;
-    const res = await driveFetch(`${API}/files?spaces=appDataFolder&q=${q(filter)}&fields=nextPageToken,files(${FIELDS})&pageSize=1000${page ? `&pageToken=${page}` : ''}`);
+    const res = await driveFetch(`${API}/files?spaces=appDataFolder&q=${encodeURIComponent(listQuery(since))}&fields=nextPageToken,files(${FIELDS})&pageSize=1000${page ? `&pageToken=${page}` : ''}`);
     const json = (await res.json()) as { files: DriveFile[]; nextPageToken?: string };
     out.push(...json.files);
     page = json.nextPageToken ?? '';
