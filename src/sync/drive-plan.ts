@@ -86,3 +86,41 @@ export function planPull(files: RemoteFile[], me: string, applied: Record<string
 /** Snapshot every this many change files; then keep only the newest few change files. */
 export const SNAPSHOT_EVERY = 50;
 export const KEEP_LOGS = 20;
+
+export type DeviceInfo = {
+  device: string;
+  /** The phone's model as it wrote it (appProperties.name), if any. */
+  name: string | null;
+  /** Its newest file's time: roughly when it last backed up. */
+  lastSeen: string;
+  /** Highest change file seq it has on Drive (its snapshot's when it has none). */
+  maxSeq: number | null;
+  files: RemoteFile[];
+};
+
+/** Every phone with files in the app folder, most recently seen first. */
+export function groupDevices(files: RemoteFile[]): DeviceInfo[] {
+  const byDevice = new Map<string, DeviceInfo>();
+  for (const f of files) {
+    const p = parseName(f);
+    if (!p || p.kind === 'legacy') continue;
+    const d = byDevice.get(p.device) ?? byDevice.set(p.device, { device: p.device, name: null, lastSeen: '', maxSeq: null, files: [] }).get(p.device)!;
+    d.files.push(f);
+    if (f.modifiedTime > d.lastSeen) {
+      d.lastSeen = f.modifiedTime;
+      d.name = f.appProperties?.name ?? d.name;
+    } else d.name ??= f.appProperties?.name ?? null;
+    if (p.seq != null) d.maxSeq = Math.max(d.maxSeq ?? 0, p.seq);
+  }
+  return [...byDevice.values()].sort((a, b) => (a.lastSeen < b.lastSeen ? 1 : -1));
+}
+
+/** A phone not seen for this long, whose changes this phone already holds, has its files removed. */
+export const STALE_DEVICE_MS = 180 * 86_400_000;
+
+/** Phones safe to clean up automatically: long unseen, and everything they wrote is already applied here. */
+export function staleDevices(devices: DeviceInfo[], me: string, applied: Record<string, number>, now: number): DeviceInfo[] {
+  return devices.filter(
+    (d) => d.device !== me && now - new Date(d.lastSeen).getTime() > STALE_DEVICE_MS && d.maxSeq != null && (applied[d.device] ?? -1) >= d.maxSeq
+  );
+}

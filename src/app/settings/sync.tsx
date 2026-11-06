@@ -1,12 +1,13 @@
 import { useSQLiteContext } from 'expo-sqlite';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Alert, View } from 'react-native';
 
 import { Icon } from '@/components/icons';
-import { Button, FormSection, Screen, Text } from '@/components/ui';
+import { Button, Divider, FormSection, Screen, Text } from '@/components/ui';
 import { toast } from 'sonner-native';
 import { haptic } from '@/lib/haptics';
-import { connectDrive, disconnectDrive, getSyncStatus, onSyncStatus, refreshPending, syncNow, type SyncStatus } from '@/sync/drive-sync';
+import { connectDrive, disconnectDrive, getSyncStatus, listDevices, onSyncStatus, refreshPending, removeDevice, syncNow, type SyncStatus } from '@/sync/drive-sync';
+import type { DeviceInfo } from '@/sync/drive-plan';
 import { describeSyncError } from '@/sync/errors';
 import { useThemeColors } from '@/theme/useThemeColor';
 
@@ -120,6 +121,8 @@ export default function BackupSettings() {
         </FormSection>
       )}
 
+      {on ? <Devices lastSyncAt={sync.lastSyncAt} /> : null}
+
       <FormSection card title="What Pettagam can see in your Drive">
         <Text variant="small">
           Only its own hidden backup folder. It can’t see, open or change any of your other files, and the backup isn’t visible in your Drive’s file
@@ -129,5 +132,92 @@ export default function BackupSettings() {
 
       {on ? <Button variant="secondary" title="Stop backing up" onPress={disconnect} /> : null}
     </Screen>
+  );
+}
+
+/**
+ * Phones backing up to this Google account. Removing one deletes its files from Drive (after this
+ * phone has taken in everything it wrote); a phone still in use just backs up again.
+ */
+function Devices({ lastSyncAt }: { lastSyncAt: number | null }) {
+  const db = useSQLiteContext();
+  const [list, setList] = useState<{ me: string; devices: DeviceInfo[] } | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [muted] = useThemeColors(['fg-muted'] as const);
+
+  const load = useCallback(() => {
+    listDevices(db).then(
+      (l) => {
+        setList(l);
+        setFailed(false);
+      },
+      () => setFailed(true)
+    );
+  }, [db]);
+  // Again after each backup, so this phone's own "last backup" stays current.
+  useEffect(load, [load, lastSyncAt]);
+
+  const remove = (d: DeviceInfo) =>
+    Alert.alert(
+      `Remove ${d.name ?? 'this device'}?`,
+      'Its backup files are deleted from your Drive. Everything it added stays here. If that phone is still in use, it will back up again the next time it opens Pettagam.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            setRemoving(d.device);
+            try {
+              await removeDevice(db, d.device);
+              haptic.success();
+            } catch (e) {
+              const { message } = describeSyncError(e instanceof Error ? e.message : String(e));
+              toast.error('Couldn’t remove it', { description: message ?? undefined });
+            } finally {
+              setRemoving(null);
+              load();
+            }
+          },
+        },
+      ]
+    );
+
+  return (
+    <FormSection card title="Devices">
+      {failed ? (
+        <Text variant="small">Couldn’t load the list. Check your connection and try again.</Text>
+      ) : !list ? (
+        <Text variant="small">Loading…</Text>
+      ) : (
+        list.devices.map((d, i) => {
+          const me = d.device === list.me;
+          return (
+            <View key={d.device}>
+              {i > 0 ? <Divider /> : null}
+              <View className="flex-row items-center gap-3 py-2.5">
+                <Icon name="ms:smartphone" size={20} color={muted} />
+                <View className="min-w-0 flex-1">
+                  <Text tone="default" weight="medium" numberOfLines={1}>
+                    {`${d.name ?? 'Phone'}${me ? ' · this phone' : ''}`}
+                  </Text>
+                  <Text variant="caption">{`Last backup ${ago(new Date(d.lastSeen).getTime())}`}</Text>
+                </View>
+                {me ? null : (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    title={removing === d.device ? 'Removing…' : 'Remove'}
+                    disabled={removing != null}
+                    onPress={() => remove(d)}
+                  />
+                )}
+              </View>
+            </View>
+          );
+        })
+      )}
+    </FormSection>
   );
 }

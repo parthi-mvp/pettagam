@@ -102,6 +102,8 @@ How it works:
 - **Saving.** Every edit is saved on the phone and marked in the outbox. A few seconds later, and when the app opens or goes to the background, the phone uploads a small change file with just the fields it changed; every 50 change files it also writes a full snapshot and removes its older change files.
 - **Other phones.** Each sync lists the backup files; any other phone's file that changed is downloaded and merged in, keeping the newer copy of each entry.
 - **Deletes.** Deletes are soft, so they reach every phone.
+- **Conflicts.** Every field of every entry has its own clock (a hybrid logical clock), so edits to different fields on different phones both survive, and all phones end up the same (`src/sync/crdt.ts`, tested with random multi-phone runs).
+- **Devices.** More → Backup lists the phones backing up to the account. Removing one deletes its files after this phone has taken in everything it wrote; phones unseen for 180 days are cleaned up automatically on the same terms.
 - **New phone.** Install, tap *Restore from Google Drive* on the welcome screen (or More → Backup) and connect the same account.
 - **Privacy.** The app folder is hidden and private to Pettagam; it can't see the user's other Drive files.
 

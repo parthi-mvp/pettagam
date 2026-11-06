@@ -1,4 +1,5 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
+import { Platform } from 'react-native';
 
 import { deviceId, observeClock, stampFields } from '@/db/clock';
 import { mergeDuplicates } from '@/db/dedupe';
@@ -8,7 +9,7 @@ import { SYNCED_TABLES } from '@/db/types';
 
 import { mergeRow, packClocks, unpackRow, type Clock, type PackedClocks, type Row } from './crdt';
 import * as Drive from './drive';
-import { KEEP_LOGS, logName, parseName, planPull, snapshotName, SNAPSHOT_EVERY, type RemoteFile } from './drive-plan';
+import { groupDevices, KEEP_LOGS, logName, parseName, planPull, snapshotName, SNAPSHOT_EVERY, staleDevices, type DeviceInfo, type RemoteFile } from './drive-plan';
 import { describeSyncError } from './errors';
 
 /**
@@ -68,6 +69,13 @@ export async function pendingCount(db: SQLiteDatabase) {
     `%-${me}`,
   ]);
   return r?.n ?? 0;
+}
+
+/** This phone's model, written on its files so the devices list can name it ("Samsung SM-S918B"). */
+function deviceName(): string {
+  const c = Platform.constants as { Brand?: string; Model?: string };
+  if (Platform.OS === 'ios') return 'iPhone';
+  return [c.Brand && c.Brand[0].toUpperCase() + c.Brand.slice(1), c.Model].filter(Boolean).join(' ').slice(0, 60) || 'Android phone';
 }
 
 const readJson = async <T,>(db: SQLiteDatabase, key: string, fallback: T): Promise<T> => {
@@ -237,7 +245,7 @@ async function push(db: SQLiteDatabase, me: string) {
     }
     seq += 1;
     const body: Snapshot = { format: 3, exportedAt: Date.now(), deviceId: me, tables, clocks: packClocks(changed) };
-    await Drive.upload(logName(me, seq), JSON.stringify(body));
+    await Drive.upload(logName(me, seq), JSON.stringify(body), undefined, { name: deviceName() });
     // Saved straight away: a crash after the upload must not reuse this seq for different changes.
     await setSetting(db, 'drive_own_seq', String(seq));
     await setSetting(db, 'drive_up_clock', changed[changed.length - 1].hlc);
@@ -250,17 +258,50 @@ async function push(db: SQLiteDatabase, me: string) {
   const clocks = packClocks(await db.getAllAsync<{ tbl: string; row_id: string; col: string; hlc: Clock }>('SELECT tbl, row_id, col, hlc FROM field_clock'));
   const snap: Snapshot = { format: 2, exportedAt: Date.now(), deviceId: me, tables, clocks };
   // shortcut: the snapshot is the whole database (fine to a few MB, ~10k entries); it's only written every 50 change files.
+  const props = { seq: String(seq), name: deviceName() };
   const existing = own?.id ?? (await Drive.findByName(snapshotName(me)))?.id;
-  const file = await Drive.upload(snapshotName(me), JSON.stringify(snap), existing, { seq: String(seq) });
+  const file = await Drive.upload(snapshotName(me), JSON.stringify(snap), existing, props).catch((e) => {
+    // Removed from another phone's devices list: write it afresh.
+    if (existing && /Google Drive 404/.test(String(e))) return Drive.upload(snapshotName(me), JSON.stringify(snap), undefined, props);
+    throw e;
+  });
   own = { id: file.id, seq };
   await writeJson(db, 'drive_own_snapshot', own);
 
   // 3. Clean up: change files the snapshot holds, except the newest few (phones that are only a little
   // behind keep reading small files instead of the whole snapshot).
-  for (const f of await Drive.listFiles()) {
+  const all = await Drive.listFiles();
+  for (const f of all) {
     const p = parseName(f);
     if (p?.kind === 'log' && p.device === me && p.seq <= seq - KEEP_LOGS) await Drive.remove(f.id);
   }
+  // And phones gone for months (a reinstall, a sold phone) whose every change is already here.
+  const applied = await readJson<Record<string, number>>(db, 'drive_applied', {});
+  for (const d of staleDevices(groupDevices(all), me, applied, Date.now())) for (const f of d.files) await Drive.remove(f.id);
+}
+
+/** Phones backing up to this Google account (this one included), most recently seen first. */
+export async function listDevices(db: SQLiteDatabase): Promise<{ me: string; devices: DeviceInfo[] }> {
+  return { me: await deviceId(db), devices: groupDevices(await Drive.listFiles()) };
+}
+
+/**
+ * Remove a phone's files from Drive (a sold phone, an old install). Syncs first, so everything it
+ * wrote is kept here and in this phone's snapshot; if that phone is still in use, it simply backs up
+ * again next time.
+ */
+export async function removeDevice(db: SQLiteDatabase, device: string) {
+  await syncNow(db);
+  // A fresh snapshot of this phone first: its change files hold only its own edits, while the snapshot
+  // holds everything merged here, so phones that never read the removed phone's files still get them.
+  const own = await readJson<{ id: string; seq: number } | null>(db, 'drive_own_snapshot', null);
+  if (own) await writeJson(db, 'drive_own_snapshot', { ...own, seq: -SNAPSHOT_EVERY });
+  await syncNow(db);
+  const { devices } = await listDevices(db);
+  for (const f of devices.find((d) => d.device === device)?.files ?? []) await Drive.remove(f.id);
+  const applied = await readJson<Record<string, number>>(db, 'drive_applied', {});
+  delete applied[device];
+  await writeJson(db, 'drive_applied', applied);
 }
 
 /** Sign in to Google and start backing up. Existing backups (another phone, a reinstall) merge in first. */

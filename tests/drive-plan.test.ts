@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { logName, parseName, planPull, snapshotName, type RemoteFile } from '../src/sync/drive-plan.ts';
+import { groupDevices, logName, parseName, planPull, snapshotName, staleDevices, type RemoteFile } from '../src/sync/drive-plan.ts';
 
 let n = 0;
 const file = (name: string, seq?: number, t = '2026-11-06T10:00:00.000Z'): RemoteFile => ({
@@ -47,4 +47,32 @@ test('the first version’s shared file merges once per change', () => {
   const legacy = file('expense-manager-sync.json');
   assert.deepEqual(kinds(planPull([legacy], 'me', {}, {})), ['legacy']);
   assert.deepEqual(planPull([legacy], 'me', {}, { [legacy.id]: legacy.modifiedTime }), []);
+});
+
+test('groupDevices: one entry per phone, newest name and time, highest seq', () => {
+  const files = [
+    file(snapshotName('a'), 50, '2026-10-01T00:00:00.000Z'),
+    { ...file(logName('a', 61), undefined, '2026-11-05T00:00:00.000Z'), appProperties: { name: 'Pixel 9' } },
+    file(logName('b', 3), undefined, '2026-11-06T00:00:00.000Z'),
+    file('expense-manager-sync.json'),
+  ];
+  const ds = groupDevices(files);
+  assert.deepEqual(
+    ds.map((d) => [d.device, d.name, d.maxSeq, d.files.length]),
+    [
+      ['b', null, 3, 1],
+      ['a', 'Pixel 9', 61, 2],
+    ]
+  );
+});
+
+test('staleDevices: only long-unseen phones whose every change is already here, never this phone', () => {
+  const now = new Date('2026-11-06T00:00:00.000Z').getTime();
+  const old = '2026-01-01T00:00:00.000Z';
+  const ds = groupDevices([file(logName('a', 9), undefined, old), file(logName('b', 9), undefined, old), file(logName('me', 1), undefined, old)]);
+  assert.deepEqual(
+    staleDevices(ds, 'me', { a: 9, b: 8, me: 1 }, now).map((d) => d.device),
+    ['a']
+  );
+  assert.deepEqual(staleDevices(ds, 'me', { a: 9 }, new Date('2026-02-01T00:00:00.000Z').getTime()), [], 'not stale yet');
 });
