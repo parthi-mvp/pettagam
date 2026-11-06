@@ -66,3 +66,13 @@ test('everything sold: no units, no value, gain realised', () => {
   const h = holding([f('buy', d(2026, 1, 1), 1000, 10), f('sell', d(2026, 2, 1), 1200, 10)], { units: true, now });
   assert.deepEqual([h.units, h.value, h.invested, h.realised], [0, 0, 0, 200]);
 });
+
+test('maturityValue: an RD with installments still to come', async () => {
+  const { maturityValue } = await import('../src/lib/holding.ts');
+  // 12 monthly ₹1,000 at 7% quarterly. Banks' RD formula M = R·((1+i)^n − 1)/(1 − (1+i)^(−1/3)), i = 1.75%, n = 4: ₹12,463.
+  const first = d(2026, 1, 1);
+  const paid = [f('contribution', first, 1000)];
+  const upcoming = Array.from({ length: 11 }, (_, i) => ({ amount: 1000, date: new Date(2026, i + 1, 1).getTime() }));
+  const v = maturityValue(paid, { rate: 7, compounding: 'quarterly', maturity: d(2027, 1, 1), upcoming });
+  assert.ok(Math.abs(v - 12_463) < 5, String(v));
+});

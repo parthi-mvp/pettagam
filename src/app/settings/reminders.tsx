@@ -40,7 +40,7 @@ export default function ReminderSettings() {
       <FormSection card>
         <SwitchRow
           title="Remind me before bills are due"
-          description="Card bills, loan EMIs and chit installments, as a notification on this phone. Works offline."
+          description="Card bills, loan EMIs, SIPs, premiums, chit installments and maturing deposits, as a notification on this phone. Works offline."
           value={prefs.enabled}
           onValueChange={toggle}
         />

@@ -33,3 +33,10 @@ test('same-day lead gives one reminder, beyond the horizon gives none, soonest f
   const p = planReminders([card, early], prefs, now);
   assert.deepEqual(p.map((x) => x.id), ['loan:2', 'loan:0', 'card-1:2', 'card-1:0']);
 });
+
+test('a maturity gets a week’s notice and one on the day, whatever the bill lead time', () => {
+  const fd: Due = { key: 'mat-1', label: 'SBI FD', verb: 'matures', amount: 107181, date: new Date(2026, 10, 30).getTime(), url: '/investment/1' };
+  const p = planReminders([fd], { ...prefs, daysBefore: 1 }, now);
+  assert.deepEqual(p.map((x) => x.title), ['SBI FD matures in 7 days', 'SBI FD matures today']);
+  assert.match(p[0].body, /≈ ₹1,07,181 · on 30 Nov/);
+});

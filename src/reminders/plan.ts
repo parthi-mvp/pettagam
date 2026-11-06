@@ -5,8 +5,8 @@ export type Due = {
   key: string;
   /** "HDFC Millennia bill", "Home loan EMI", "Netflix". */
   label: string;
-  /** 'due' = must be paid; 'expected' = a recurring charge that usually comes. */
-  verb: 'due' | 'expected';
+  /** 'due' = must be paid; 'expected' = a recurring charge that usually comes; 'matures' = a deposit ends. */
+  verb: 'due' | 'expected' | 'matures';
   amount: number | null;
   /** Local midnight of the day. */
   date: number;
@@ -35,7 +35,8 @@ export function planReminders(dues: Due[], prefs: ReminderPrefs, now = Date.now(
   const out: Planned[] = [];
   for (const d of dues) {
     if (d.verb === 'expected' && !prefs.bills) continue;
-    const leads = d.verb === 'due' ? [...new Set([prefs.daysBefore, 0])] : [prefs.daysBefore];
+    // A maturity gets a week's notice (time to decide: renew, or move the money) and one on the day.
+    const leads = d.verb === 'matures' ? [7, 0] : d.verb === 'due' ? [...new Set([prefs.daysBefore, 0])] : [prefs.daysBefore];
     for (const lead of leads) {
       const day = new Date(d.date - lead * DAY);
       const at = new Date(day.getFullYear(), day.getMonth(), day.getDate(), prefs.hour).getTime();
@@ -45,7 +46,12 @@ export function planReminders(dues: Due[], prefs: ReminderPrefs, now = Date.now(
         id: `${d.key}:${lead}`,
         at,
         title: `${d.label} ${d.verb} ${whenWord(lead)}`,
-        body: [amount, d.verb === 'due' ? `pay by ${dayLabel(d.date)}` : `around ${dayLabel(d.date)}`].filter(Boolean).join(' · '),
+        body: [
+          d.verb === 'matures' && amount ? `≈ ${amount}` : amount,
+          d.verb === 'due' ? `pay by ${dayLabel(d.date)}` : d.verb === 'matures' ? `on ${dayLabel(d.date)}` : `around ${dayLabel(d.date)}`,
+        ]
+          .filter(Boolean)
+          .join(' · '),
         url: d.url,
       });
     }

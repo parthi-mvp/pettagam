@@ -7,8 +7,9 @@ import { INVESTMENT_TYPE_OPTIONS } from '@/components/pickers';
 import { Button, Card, Divider, Empty, Header, IconTile, PressableScale, Row, Screen, SectionTitle, Text } from '@/components/ui';
 import { matchBank } from '@/catalog/banks';
 import { useLiveQuery } from '@/db/events';
+import { returnOf } from '@/db/investments';
 import { listInvestments } from '@/db/repo';
-import { INVESTMENT_TYPE_LABELS, type Investment, type InvestmentType } from '@/db/types';
+import { INVESTMENT_TYPE_LABELS, type Investment, type InvestmentEntry, type InvestmentType } from '@/db/types';
 import { useTheme } from '@/hooks/use-theme';
 import { haptic } from '@/lib/haptics';
 import { cn } from '@/lib/cn';
@@ -33,6 +34,16 @@ export default function Investments() {
   const value = items.reduce((s, i) => s + i.current_value, 0);
   const invested = items.reduce((s, i) => s + investedOf(i), 0);
   const gain = value - invested;
+  // Whole-portfolio XIRR: every entry of every holding (chits aside, they have their own maths) and today's value.
+  const { data: allEntries } = useLiveQuery(
+    (d) =>
+      d.getAllAsync<Pick<InvestmentEntry, 'kind' | 'amount' | 'date'>>(
+        `SELECT e.kind, e.amount, e.date FROM investment_entries e JOIN investments i ON i.id = e.investment_id
+         WHERE e.deleted = 0 AND i.deleted = 0 AND i.type != 'chit'`
+      ),
+    ['investments', 'investment_entries']
+  );
+  const yearly = allEntries ? returnOf(allEntries, items.filter((i) => i.type !== 'chit').reduce((s, i) => s + i.current_value, 0), now) : null;
 
   // Types by value, biggest first; each keeps one colour for the bar, legend and section.
   const types = [...new Set(items.map((i) => i.type))]
@@ -83,7 +94,7 @@ export default function Investments() {
           </Text>
           {invested > 0 ? (
             <Text variant="small" weight="medium" className={gain >= 0 ? 'text-hero-positive' : 'text-hero-negative'}>
-              {`${gain >= 0 ? '+' : '−'}${money(Math.abs(gain))} (${pct((gain / invested) * 100)}) overall`}
+              {`${gain >= 0 ? '+' : '−'}${money(Math.abs(gain))} (${pct((gain / invested) * 100)}) overall${yearly != null ? ` · ${pct(yearly * 100)} a year` : ''}`}
             </Text>
           ) : null}
         </View>

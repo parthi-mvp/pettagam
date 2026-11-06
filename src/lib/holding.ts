@@ -117,3 +117,12 @@ export function holding(
   }
   return { units: countUnits ? units : null, invested: cost, realised, income, value: Math.max(0, value), price: countUnits ? p : null, basis, asOf };
 }
+
+/**
+ * Roughly what it's worth on its maturity date: today's money grown at the rate, plus the regular
+ * payments still to come (`upcoming`, e.g. RD installments) grown from their own dates.
+ */
+export function maturityValue(flows: Flow[], opts: { rate: number; compounding: Compounding; maturity: number; upcoming?: { amount: number; date: number }[] }) {
+  const future: Flow[] = (opts.upcoming ?? []).map((u) => ({ kind: 'contribution', date: u.date, amount: u.amount, units: null }));
+  return holding([...flows, ...future], { units: false, rate: opts.rate, compounding: opts.compounding, maturity: opts.maturity, now: opts.maturity }).value;
+}

@@ -10,13 +10,15 @@ import { ChitPanel } from '@/components/chit-advisor';
 import { AccountPicker } from '@/components/pickers';
 import { Button, Card, Chips, DateField, dialog, Divider, Field, Row, Screen, SegmentedControl, Stat, SwitchRow, Text } from '@/components/ui';
 import { useLiveQuery } from '@/db/events';
-import { deleteEntry, deleteInvestment, holdingOf, saveEntry } from '@/db/investments';
+import { deleteEntry, deleteInvestment, holdingOf, returnOf, saveEntry } from '@/db/investments';
 import { getById, listAccounts, listInvestmentEntries } from '@/db/repo';
 import { INVESTMENT_TYPE_LABELS, type InvestmentEntry, type InvestmentEntryKind } from '@/db/types';
 import { useTheme } from '@/hooks/use-theme';
 import { dateLabel, money, parseDate, pct, toInputDate } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
-import { compoundingOf, defaultInflowKind, usesGrams, usesUnits } from '@/lib/invest';
+import { maturityValue } from '@/lib/holding';
+import { compoundingFor, defaultInflowKind, EVERY_LABEL, parseDetails, PAYOUTS, scheduleOf, taxSaverOf, usesGrams, usesUnits, type PlanDetails } from '@/lib/invest';
+import { addMonths, dueDates, nextDue } from '@/lib/schedule';
 import { hasLivePrice, refreshPrices } from '@/invest/prices';
 
 const KINDS: { value: InvestmentEntryKind; label: string }[] = [
@@ -172,7 +174,37 @@ export default function InvestmentDetail() {
       },
     ]);
 
-  const comp = compoundingOf(inv.type);
+  const comp = compoundingFor(inv);
+  const plan = parseDetails<PlanDetails>(inv);
+  const kindOfPlan = scheduleOf(inv.type);
+  const yearly = returnOf(entries ?? [], h.value, now);
+  // Estimated value at maturity, for deposits that compound: today's money plus installments still to come.
+  const atMaturity =
+    !isChit && inv.maturity_date && inv.maturity_date > now && inv.interest_rate && comp && comp !== 'none'
+      ? maturityValue(entries ?? [], {
+          rate: inv.interest_rate,
+          compounding: comp,
+          maturity: inv.maturity_date,
+          upcoming: plan.schedule ? dueDates(plan.schedule, now, inv.maturity_date - 1).map((date) => ({ date, amount: plan.schedule!.amount })) : [],
+        })
+      : null;
+  const saver = plan.taxSaver ? taxSaverOf(inv.type) : null;
+  const firstIn = (entries ?? []).filter((e) => e.kind === 'buy' || e.kind === 'contribution').reduce((m, e) => Math.min(m, e.date), Infinity);
+  const lastIn = (entries ?? []).filter((e) => e.kind === 'buy' || e.kind === 'contribution').reduce((m, e) => Math.max(m, e.date), 0);
+  const lockLine = !saver
+    ? null
+    : inv.type === 'fd'
+      ? `Tax-saver: locked until ${dateLabel(addMonths(inv.start_date ?? firstIn, 60))}`
+      : lastIn
+        ? `ELSS: each installment is locked for 3 years. The first frees on ${dateLabel(addMonths(firstIn, 36))}, the latest on ${dateLabel(addMonths(lastIn, 36))}`
+        : null;
+  const facts = [
+    plan.schedule && kindOfPlan ? `${kindOfPlan.label} ${money(plan.schedule.amount)} ${EVERY_LABEL[plan.schedule.every].toLowerCase()} · next ${dateLabel(nextDue(plan.schedule, now))}` : null,
+    plan.payout && plan.payout !== 'cumulative' ? `Interest paid out ${PAYOUTS.find((p) => p.value === plan.payout)?.label.toLowerCase()}` : null,
+    plan.purity ? `${plan.purity} gold` : null,
+    atMaturity ? `≈ ${money(atMaturity)} at maturity` : null,
+    lockLine,
+  ].filter(Boolean) as string[];
   const basisLine =
     h.basis === 'price'
       ? `${live ? 'Market price' : 'Price'} ${money(h.price!, true)} a ${unitWord}${h.asOf ? ` · ${dateLabel(h.asOf)}` : ''}`
@@ -208,6 +240,11 @@ export default function InvestmentDetail() {
                 color={unrealised >= 0 ? t.success : t.danger}
               />
             </View>
+            {yearly != null ? (
+              <View className="flex-row gap-3">
+                <Stat label="Return a year (XIRR)" value={pct(yearly * 100)} color={yearly >= 0 ? t.success : t.danger} />
+              </View>
+            ) : null}
             {h.realised || h.income ? (
               <View className="flex-row gap-3">
                 {h.realised ? <Stat label="Profit taken" value={`${h.realised >= 0 ? '+' : '−'}${money(Math.abs(h.realised))}`} color={h.realised >= 0 ? t.success : t.danger} /> : null}
@@ -224,6 +261,11 @@ export default function InvestmentDetail() {
           <Text variant="small">{inv.current_value > 0 ? 'Value = installments paid, until you win the prize.' : 'Prized: the pot has been paid out to you.'}</Text>
         )}
         {inv.maturity_date ? <Text variant="small">{`${inv.maturity_date < now ? 'Matured' : 'Matures'} ${dateLabel(inv.maturity_date)}`}</Text> : null}
+        {facts.map((f) => (
+          <Text key={f} variant="small">
+            {f}
+          </Text>
+        ))}
       </Card>
 
       <AiNote label="Explain this investment" run={() => aiExplainInvestment(inv, entries ?? [])} />

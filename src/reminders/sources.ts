@@ -3,6 +3,9 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import { accountBalances, getSetting, listAccounts, listInvestments, setSetting } from '@/db/repo';
 import { isCardLike } from '@/db/types';
 import { nextMonthDay } from '@/lib/card-cycle';
+import { money } from '@/lib/format';
+import { parseDetails, scheduleOf, yearlyMinimum, type PlanDetails } from '@/lib/invest';
+import { nextDue } from '@/lib/schedule';
 import { chitStatuses, recurringPayments } from '@/reports/analytics';
 
 import type { Due } from './plan';
@@ -47,6 +50,35 @@ export async function collectDues(db: SQLiteDatabase, now = new Date()): Promise
     if (c.summary.done || !c.summary.next || !c.summary.nextDueDate) continue;
     dues.push({ key: `chit-${c.id}`, label: `${c.name} installment`, verb: 'due', amount: c.summary.next.net, date: midnight(c.summary.nextDueDate), url: `/investment/${c.id}` });
   }
+  // Investments: regular payments (SIP, RD, premium), maturities, and PPF / SSY's yearly minimum.
+  const fyStart = new Date(now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1, 3, 1).getTime();
+  const paidThisYear = new Map(
+    (
+      await db.getAllAsync<{ id: string; paid: number }>(
+        `SELECT investment_id AS id, SUM(amount) AS paid FROM investment_entries
+         WHERE deleted = 0 AND kind IN ('buy', 'contribution') AND date >= ? GROUP BY investment_id`,
+        [fyStart]
+      )
+    ).map((r) => [r.id, r.paid])
+  );
+  for (const inv of investments) {
+    if (inv.type === 'chit') continue;
+    const url = `/investment/${inv.id}`;
+    const plan = parseDetails<PlanDetails>(inv);
+    const kind = scheduleOf(inv.type);
+    if (plan.schedule && kind && (!inv.maturity_date || inv.maturity_date >= now.getTime())) {
+      dues.push({ key: `plan-${inv.id}`, label: `${inv.name} ${kind.label.toLowerCase()}`, verb: 'due', amount: plan.schedule.amount, date: nextDue(plan.schedule, now.getTime()), url });
+    }
+    if (inv.maturity_date && inv.maturity_date >= midnight(now.getTime())) {
+      dues.push({ key: `mat-${inv.id}`, label: inv.name, verb: 'matures', amount: inv.current_value || null, date: midnight(inv.maturity_date), url });
+    }
+    const min = yearlyMinimum(inv.type);
+    if (min && (paidThisYear.get(inv.id) ?? 0) < min) {
+      const fyEnd = new Date(new Date(fyStart).getFullYear() + 1, 2, 31).getTime();
+      dues.push({ key: `min-${inv.id}`, label: `${inv.name}: ${money(min)} yearly minimum`, verb: 'due', amount: null, date: fyEnd, url });
+    }
+  }
+
   for (const r of recurring) {
     if (r.next < now.getTime() - 86_400_000) continue;
     dues.push({ key: `rec-${r.merchant.toLowerCase()}`, label: r.merchant, verb: 'expected', amount: r.amount, date: midnight(r.next), url: '/reports?tab=bills' });

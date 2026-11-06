@@ -7,7 +7,7 @@ import { toast } from 'sonner-native';
 
 import { AccountPicker, INVESTMENT_TYPE_OPTIONS, OptionPicker } from '@/components/pickers';
 import { canLinkPrice, PriceLinkField } from '@/components/price-link-field';
-import { AmountInput, Button, Card, DateField, Field, FormSection, Screen, SwitchRow, Text } from '@/components/ui';
+import { AmountInput, Button, Card, Chips, DateField, Field, FormSection, Screen, SwitchRow, Text } from '@/components/ui';
 import { useLiveQuery } from '@/db/events';
 import { recomputeInvested, saveEntry } from '@/db/investments';
 import { getById, listAccounts, save } from '@/db/repo';
@@ -16,7 +16,27 @@ import { money, parseDate, toInputDate } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
 import { DURATION, EASE_OUT } from '@/theme/motion';
 import { addMonths, CHIT_DEFAULTS, MAX_COMMISSION_PCT } from '@/lib/chit';
-import { defaultInflowKind, fdAccruedValue, parseDetails, usesMaturity, usesRate, usesUnits, type ChitDetails, type PriceLink, usesGrams, isFdLike } from '@/lib/invest';
+import {
+  defaultInflowKind,
+  EVERY_LABEL,
+  fdAccruedValue,
+  hasPayoutMode,
+  hasPurity,
+  isFdLike,
+  parseDetails,
+  PAYOUTS,
+  scheduleOf,
+  taxSaverOf,
+  usesGrams,
+  usesMaturity,
+  usesRate,
+  usesUnits,
+  type ChitDetails,
+  type Payout,
+  type PlanDetails,
+  type PriceLink,
+  type Purity,
+} from '@/lib/invest';
 import { refreshPrices } from '@/invest/prices';
 
 // Sections that come and go with the type fade in, leave faster, and the rest slide to fill the gap.
@@ -31,6 +51,11 @@ function Section({ children }: { children: ReactNode }) {
     </Animated.View>
   );
 }
+
+const sameLink = (inv: Investment | null, l: PriceLink) => {
+  const o = inv ? parseDetails<PriceLink>(inv) : {};
+  return !!inv && o.mfScheme === l.mfScheme && o.coinId === l.coinId;
+};
 
 export default function InvestmentForm() {
   const db = useSQLiteContext();
@@ -56,6 +81,12 @@ export default function InvestmentForm() {
   const [notes, setNotes] = useState('');
   const [link, setLink] = useState<PriceLink>({});
   const [linkName, setLinkName] = useState<string | null>(null);
+  const [payout, setPayout] = useState<Payout>('cumulative');
+  const [planAmount, setPlanAmount] = useState('');
+  const [planEvery, setPlanEvery] = useState<string>('1');
+  const [planNext, setPlanNext] = useState('');
+  const [purity, setPurity] = useState<Purity | null>(null);
+  const [taxSaver, setTaxSaver] = useState(false);
   const [paidFrom, setPaidFrom] = useState(false);
   const [accountId, setAccountId] = useState<string | null>(null);
   const { data: accounts } = useLiveQuery(listAccounts, ['accounts']);
@@ -83,6 +114,13 @@ export default function InvestmentForm() {
       setGstPct(String(d.gstPct ?? CHIT_DEFAULTS.gstPct));
       setNotes(i.notes ?? '');
       setLink(parseDetails<PriceLink>(i));
+      const plan = parseDetails<PlanDetails>(i);
+      setPayout(plan.payout ?? 'cumulative');
+      setPlanAmount(plan.schedule ? String(plan.schedule.amount) : '');
+      setPlanEvery(String(plan.schedule?.every ?? 1));
+      setPlanNext(plan.schedule ? toInputDate(plan.schedule.next) : '');
+      setPurity(plan.purity ?? null);
+      setTaxSaver(!!plan.taxSaver);
     });
   }, [db, id]);
 
@@ -98,7 +136,12 @@ export default function InvestmentForm() {
   // Subscription = chit value ÷ members when not given.
   const defaultInstallment = num(chitValue) && (num(members) ?? num(months)) ? Math.round(num(chitValue)! / (num(members) ?? num(months))!) : null;
 
+  const plan = scheduleOf(type);
+  const saver = taxSaverOf(type);
+
   const onSave = async () => {
+    const planNextMs = planNext ? parseDate(planNext) : null;
+    if (plan && num(planAmount) != null && !(num(planAmount)! > 0 && planNextMs)) return toast.error(`Enter the ${plan.label.toLowerCase()} amount and its next date`);
     if (!existing && paidFrom && !accountId) return toast.error('Pick the account you paid from');
     const inv = num(invested) ?? 0;
     const cur = num(current) ?? fdSuggestion ?? inv;
@@ -120,9 +163,19 @@ export default function InvestmentForm() {
             commissionPct: num(commissionPct) ?? CHIT_DEFAULTS.commissionPct,
             gstPct: num(gstPct) ?? CHIT_DEFAULTS.gstPct,
           } satisfies ChitDetails)
-        : canLinkPrice(type) && (link.mfScheme || link.coinId)
-          ? JSON.stringify({ ...(existing ? parseDetails(existing) : {}), ...link })
-          : (existing?.details ?? null);
+        : JSON.stringify({
+            // What's stored stays (a fund's last price), unless the fund or coin changed, or the type no longer has one.
+            ...(existing ? parseDetails(existing) : {}),
+            ...(canLinkPrice(type) && (link.mfScheme || link.coinId)
+              ? sameLink(existing, link)
+                ? link
+                : { ...link, livePrice: undefined, livePriceAt: undefined }
+              : { mfScheme: undefined, coinId: undefined, livePrice: undefined, livePriceAt: undefined }),
+            payout: hasPayoutMode(type) ? payout : undefined,
+            schedule: plan && num(planAmount) && planNextMs ? { amount: num(planAmount)!, every: Number(planEvery) as 1 | 3 | 6 | 12, next: planNextMs } : undefined,
+            purity: hasPurity(type) ? (purity ?? undefined) : undefined,
+            taxSaver: saver ? taxSaver : undefined,
+          } satisfies PlanDetails & PriceLink);
     // A chit ends with its last installment: start + (months − 1).
     const chitEnd = type === 'chit' && startMs && num(months) ? addMonths(startMs, num(months)! - 1) : null;
     const newId = await save(db, 'investments', {
@@ -335,6 +388,48 @@ export default function InvestmentForm() {
             )}
           </FormSection>
         </Section>
+
+        {hasPayoutMode(type) ? (
+          <Section key="payout">
+            <FormSection title="Interest paid">
+              <Chips options={PAYOUTS} value={payout} onChange={setPayout} />
+              <Text variant="caption">
+                {payout === 'cumulative' ? 'Interest is added to the deposit and compounds until maturity.' : 'Interest goes to your bank; the deposit stays at what you put in. Record payouts as Interest entries.'}
+              </Text>
+            </FormSection>
+          </Section>
+        ) : null}
+
+        {plan ? (
+          <Section key={`plan-${type}`}>
+            <FormSection title={plan.label}>
+              <View className="flex-row gap-3">
+                {half(<Field label="Amount" prefix="₹" value={planAmount} onChangeText={setPlanAmount} keyboardType="decimal-pad" placeholder="Optional" />)}
+                {half(<DateField label="Next due" value={planNext} onChange={setPlanNext} />)}
+              </View>
+              {plan.every.length > 1 ? (
+                <Chips options={plan.every.map((e) => ({ value: String(e), label: EVERY_LABEL[e] }))} value={planEvery} onChange={setPlanEvery} />
+              ) : null}
+              <Text variant="caption">Used for reminders{type === 'rd' ? ' and the maturity estimate' : ''}. Record each payment as an entry when it’s made.</Text>
+            </FormSection>
+          </Section>
+        ) : null}
+
+        {hasPurity(type) ? (
+          <Section key="purity">
+            <FormSection title="Purity">
+              <Chips options={(['24K', '22K', '18K'] as const).map((p) => ({ value: p, label: p }))} value={purity} onChange={setPurity} />
+            </FormSection>
+          </Section>
+        ) : null}
+
+        {saver ? (
+          <Section key="saver">
+            <FormSection>
+              <SwitchRow title={saver.label} description="Shows when the money can be taken out." value={taxSaver} onValueChange={setTaxSaver} />
+            </FormSection>
+          </Section>
+        ) : null}
 
         <Section>
           <FormSection title="Dates">

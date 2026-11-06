@@ -2,7 +2,8 @@ import * as Crypto from 'expo-crypto';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 import { holding, type Holding } from '@/lib/holding';
-import { compoundingOf, parseDetails, usesUnits, type ChitDetails, type PriceLink } from '@/lib/invest';
+import { xirr } from '@/lib/xirr';
+import { compoundingFor, parseDetails, usesUnits, type ChitDetails, type PriceLink } from '@/lib/invest';
 
 import { emitChange } from './events';
 import { getById, getSetting, listInvestmentEntries, listInvestments, save, setSetting, softDelete } from './repo';
@@ -29,7 +30,7 @@ export function holdingOf(inv: Investment, entries: InvestmentEntry[], now = Dat
   return holding(entries, {
     units: usesUnits(inv.type),
     rate: inv.interest_rate,
-    compounding: compoundingOf(inv.type) ?? undefined,
+    compounding: compoundingFor(inv) ?? undefined,
     maturity: inv.maturity_date,
     live: link.livePrice && link.livePriceAt ? { price: link.livePrice, at: link.livePriceAt } : null,
     now,
@@ -190,3 +191,12 @@ export async function refreshInvestments(db: SQLiteDatabase) {
   if (keep) await setSetting(db, 'inv_values_v1', '1');
   emitChange('investments');
 }
+
+/** Annualised return (XIRR) from the entries and today's value; null under ~6 months of history (too noisy). */
+export function returnOf(entries: Pick<InvestmentEntry, 'kind' | 'amount' | 'date'>[], value: number, now = Date.now()) {
+  const flows = entries.flatMap((e) =>
+    e.kind === 'buy' || e.kind === 'contribution' ? [{ amount: -e.amount, date: e.date }] : e.kind === 'valuation' ? [] : [{ amount: e.amount, date: e.date }]
+  );
+  return xirr([...flows, { amount: value, date: now }], MIN_XIRR_DAYS);
+}
+const MIN_XIRR_DAYS = 180;
