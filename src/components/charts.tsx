@@ -259,6 +259,8 @@ export function CashFlowBars({ months }: { months: { label: string; income: numb
   const [pick, setPick] = useState(last);
   const max = Math.max(1, ...months.flatMap((m) => [m.income, m.expense]));
   const BAR_H = 112;
+  // A full year (12 pairs) needs thinner bars to fit a phone's width.
+  const bar = months.length > 8 ? 'w-[6px]' : 'w-[9px]';
   const m = months[pick];
   const kept = m ? m.income - m.expense : 0;
   return (
@@ -276,7 +278,7 @@ export function CashFlowBars({ months }: { months: { label: string; income: numb
           </Text>
         </View>
       ) : null}
-      <View className="flex-row items-end gap-2" style={{ height: BAR_H }}>
+      <View className={months.length > 8 ? 'flex-row items-end gap-1' : 'flex-row items-end gap-2'} style={{ height: BAR_H }}>
         {months.map((mo, i) => (
           <PressableScale
             key={mo.label}
@@ -287,15 +289,15 @@ export function CashFlowBars({ months }: { months: { label: string; income: numb
             accessibilityLabel={`${mo.label}: in ${money(mo.income)}, out ${money(mo.expense)}`}
             className="h-full flex-1 flex-row items-end justify-center gap-[3px]"
             style={{ opacity: i === pick ? 1 : 0.6 }}>
-            <View className="w-[9px] rounded-t-[4px]" style={{ height: Math.max(2, (mo.income / max) * BAR_H), backgroundColor: neutral }} />
-            <View className="w-[9px] rounded-t-[4px]" style={{ height: Math.max(2, (mo.expense / max) * BAR_H), backgroundColor: accent }} />
+            <View className={`${bar} rounded-t-[3px]`} style={{ height: Math.max(2, (mo.income / max) * BAR_H), backgroundColor: neutral }} />
+            <View className={`${bar} rounded-t-[3px]`} style={{ height: Math.max(2, (mo.expense / max) * BAR_H), backgroundColor: accent }} />
           </PressableScale>
         ))}
       </View>
-      <View className="flex-row gap-2">
+      <View className={months.length > 8 ? 'flex-row gap-1' : 'flex-row gap-2'}>
         {months.map((mo, i) => (
-          <Text key={mo.label} variant="caption" align="center" weight={i === pick ? 'semibold' : 'regular'} tone={i === pick ? 'default' : 'muted'} className="flex-1">
-            {mo.label.split(' ')[0]}
+          <Text key={mo.label} variant="caption" align="center" weight={i === pick ? 'semibold' : 'regular'} tone={i === pick ? 'default' : 'muted'} className="flex-1" numberOfLines={1}>
+            {months.length > 8 ? mo.label.slice(0, 1) : mo.label.split(' ')[0]}
           </Text>
         ))}
       </View>
@@ -322,7 +324,14 @@ function Swatch({ color, label }: { color: string; label: string }) {
  * Each category's last few months as a row: this month's amount, how it compares with its usual
  * (the three months before), and small bars in the category's colour with this month solid.
  */
-export function CategoryTrendList({ items }: { items: { key: string; name: string; color: string; icon: AnyIcon; months: number[] }[] }) {
+export function CategoryTrendList({
+  items,
+  upIsGood,
+}: {
+  items: { key: string; name: string; color: string; icon: AnyIcon; months: number[] }[];
+  /** Income: going up is good (green), the opposite of spending. */
+  upIsGood?: boolean;
+}) {
   const BAR_H = 24;
   return (
     <View className="gap-3.5">
@@ -345,7 +354,7 @@ export function CategoryTrendList({ items }: { items: { key: string; name: strin
               <Text tone="default" numberOfLines={1}>
                 {it.name}
               </Text>
-              <Text variant="caption" tone={change != null && change >= 0.1 ? 'danger' : change != null && change <= -0.1 ? 'success' : 'muted'} tabular>
+              <Text variant="caption" tone={change == null || Math.abs(change) < 0.1 ? 'muted' : change > 0 === !upIsGood ? 'danger' : 'success'} tabular>
                 {note || `Usually ${money(usual)}`}
               </Text>
             </View>

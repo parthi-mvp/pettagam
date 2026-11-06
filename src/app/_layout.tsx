@@ -104,6 +104,7 @@ function Routes() {
         <Stack.Screen name="more" options={{ title: 'More' }} />
         <Stack.Screen name="accounts" options={{ title: 'Accounts' }} />
         <Stack.Screen name="reports" options={{ title: 'Reports' }} />
+        <Stack.Screen name="year" options={{ title: 'Year in review' }} />
         <Stack.Screen name="categories" options={{ title: 'Categories' }} />
         <Stack.Screen name="tags" options={{ title: 'Tags' }} />
         <Stack.Screen name="tag" options={{ title: 'Tag' }} />

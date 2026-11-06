@@ -9,9 +9,9 @@ import { budgetOverview } from '@/budget/queries';
 import { BUDGET_TEXT, BudgetBar } from '@/components/budget-bar';
 import { CashFlowBars, CategoryTrendList, PaceChart, RankedShares, SpendCalendar } from '@/components/charts';
 import { TxnList } from '@/components/txn-list';
-import { listTransactions } from '@/db/repo';
+import { listTransactions, tagTotals } from '@/db/repo';
 import { categoryIcon, Icon } from '@/components/icons';
-import { Amount, Button, Card, Divider, Empty, IconTile, MonthSwitcher, Row, Screen, SectionTitle, ShareBar, Text } from '@/components/ui';
+import { Amount, Button, Card, Divider, Empty, IconTile, MonthSwitcher, PressableScale, Row, Screen, SectionTitle, ShareBar, Text } from '@/components/ui';
 import { useLiveQuery } from '@/db/events';
 import { money, monthRange } from '@/lib/format';
 import { cardStatements, categoryBreakdown, categoryTrend, dailySpend, exportCsv, insights, monthlyTrend, netWorth, paymentMethods, recurringPayments, spendPace, topMerchants } from '@/reports/analytics';
@@ -21,6 +21,13 @@ import { useThemeColors } from '@/theme/useThemeColor';
 
 const pct = (part: number, whole: number) => (whole ? `${Math.round((part / whole) * 100)}%` : '0%');
 const CARD = 'rounded-2xl px-3.5 py-3.5';
+/** "3 – 9 Oct", or one date when it's a single day. */
+const spanLabel = (first: number, last: number) => {
+  const f = (t: number, month: boolean) => new Date(t).toLocaleDateString('en-IN', month ? { day: 'numeric', month: 'short' } : { day: 'numeric' });
+  if (new Date(first).toDateString() === new Date(last).toDateString()) return f(last, true);
+  const sameMonth = new Date(first).getMonth() === new Date(last).getMonth() && new Date(first).getFullYear() === new Date(last).getFullYear();
+  return `${f(first, !sameMonth)} – ${f(last, true)}`;
+};
 const CADENCE_LABEL = { weekly: 'Weekly', monthly: 'Monthly', quarterly: 'Every 3 months', yearly: 'Yearly' } as const;
 
 /** One titled block: the title sits outside its card, like Home. */
@@ -54,6 +61,8 @@ export default function Reports() {
   const { data: methods } = useLiveQuery((d) => paymentMethods(d, start, end), ['transactions'], deps);
   const { data: trend } = useLiveQuery((d) => monthlyTrend(d, 6), ['transactions']);
   const { data: catTrend } = useLiveQuery((d) => categoryTrend(d, 6, asOf), ['transactions', 'categories'], deps);
+  const { data: incomeTrend } = useLiveQuery((d) => categoryTrend(d, 6, asOf, 'income'), ['transactions', 'categories'], deps);
+  const { data: tags } = useLiveQuery(tagTotals, ['transactions']);
   const { data: daily } = useLiveQuery((d) => dailySpend(d, start, end), ['transactions'], deps);
   const dayStart = day == null ? null : new Date(new Date(start).getFullYear(), new Date(start).getMonth(), day + 1).getTime();
   const { data: dayRows } = useLiveQuery(
@@ -65,7 +74,7 @@ export default function Reports() {
   const { data: recurring } = useLiveQuery((d) => recurringPayments(d), ['transactions', 'categories']);
   const { data: nw } = useLiveQuery(netWorth, ['accounts', 'transactions', 'investments', 'investment_entries']);
   const { data: tips } = useLiveQuery(insights, ['transactions', 'accounts', 'investments']);
-  const [brass, danger] = useThemeColors(['brass', 'danger'] as const);
+  const [brass, danger, muted] = useThemeColors(['brass', 'danger', 'fg-muted'] as const);
 
   const spent = cats?.reduce((s, c) => s + c.total, 0) ?? 0;
   const earned = incomeCats?.reduce((s, c) => s + c.total, 0) ?? 0;
@@ -80,6 +89,12 @@ export default function Reports() {
     .filter((c) => c.months.some((v) => v > 0))
     .slice(0, 6)
     .map((c) => ({ key: c.id ?? 'none', name: c.name, color: c.color, icon: categoryIcon(c.name, undefined, c.icon), months: c.months }));
+  const incomeItems = (incomeTrend ?? [])
+    .filter((c) => c.months.some((v) => v > 0))
+    .slice(0, 5)
+    .map((c) => ({ key: c.id ?? 'none', name: c.name, color: c.color, icon: categoryIcon(c.name, undefined, c.icon), months: c.months }));
+  const topTags = (tags ?? []).filter((t) => t.spent > 0).sort((a, b) => b.spent - a.spent).slice(0, 6);
+  const year = new Date(start).getFullYear();
   const recurringMonthly = (recurring ?? []).reduce((s, r) => s + r.monthly, 0);
 
   const onExport = async () => {
@@ -299,6 +314,49 @@ export default function Reports() {
         </Block>
       ) : null}
 
+      {/* Where the money comes from, each source against its usual. */}
+      {incomeItems.length > 0 ? (
+        <Block title="Income sources" detail="Last 6 months">
+          <Card className={CARD}>
+            <CategoryTrendList items={incomeItems} upIsGood />
+          </Card>
+        </Block>
+      ) : null}
+
+      {/* Trips, events, projects: spending across categories, by tag. */}
+      {topTags.length > 0 ? (
+        <Block title="By tag" action="All tags" onAction={() => router.push('/tags')}>
+          <Card className={`gap-3.5 ${CARD}`}>
+            {topTags.map((t) => (
+              <PressableScale
+                key={t.tag}
+                scaleTo={0.99}
+                onPress={() => router.push({ pathname: '/tag', params: { name: t.tag } })}
+                accessibilityRole="button"
+                accessibilityLabel={`${t.tag}: ${money(t.spent)}, ${t.count} entries`}
+                className="gap-1.5">
+                <View className="flex-row items-baseline justify-between gap-2">
+                  <Text tone="default" numberOfLines={1} className="min-w-0 flex-1">
+                    {`#${t.tag}`}
+                  </Text>
+                  <Text weight="medium" tone="default" tabular>
+                    {money(t.spent)}
+                  </Text>
+                </View>
+                <View className="flex-row items-center gap-2.5">
+                  <View className="h-1.5 flex-1 overflow-hidden rounded-full bg-fill">
+                    <View className="h-full rounded-full bg-primary" style={{ width: `${(t.spent / topTags[0].spent) * 100}%` }} />
+                  </View>
+                  <Text variant="caption" tabular>
+                    {`${t.count} ${t.count === 1 ? 'entry' : 'entries'} · ${spanLabel(t.first, t.last)}`}
+                  </Text>
+                </View>
+              </PressableScale>
+            ))}
+          </Card>
+        </Block>
+      ) : null}
+
       {/* Subscriptions, rent, EMIs, bills: found from steady payments, not entered by hand. */}
       {recurring && recurring.length > 0 ? (
         <Block title="Recurring payments" detail={`${money(recurringMonthly)} a month`}>
@@ -341,6 +399,18 @@ export default function Reports() {
           </Card>
         </Block>
       ) : null}
+
+      {/* The whole year: its own page. */}
+      <PressableScale scaleTo={0.98} onPress={() => router.push({ pathname: '/year', params: { year: String(year) } })} accessibilityRole="button" className="pt-3">
+        <Card className="flex-row items-center gap-3 rounded-2xl px-3.5 py-3.5">
+          <IconTile icon="ms:calendar_month" color={brass} size={36} />
+          <View className="min-w-0 flex-1 gap-0.5">
+            <Text tone="default" weight="medium">{`${year} in review`}</Text>
+            <Text variant="caption">Totals, best and worst months, top categories</Text>
+          </View>
+          <Icon name="chevronRight" size={18} color={muted} />
+        </Card>
+      </PressableScale>
 
       <AiNote label={`Tax-saving check (80C) for ${financialYear().label}`} run={() => aiTaxCheck(db)} />
 

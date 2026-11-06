@@ -68,10 +68,11 @@ export async function spendPace(db: SQLiteDatabase, now = new Date()): Promise<S
   return { days, today, current, previous, previousLabel: new Date(prev.start).toLocaleDateString('en-IN', { month: 'short' }) };
 }
 
-export async function monthlyTrend(db: SQLiteDatabase, months = 6): Promise<MonthPoint[]> {
+/** Money in and out per month for `months` months ending with the month of `base` (oldest first). */
+export async function monthlyTrend(db: SQLiteDatabase, months = 6, base = new Date()): Promise<MonthPoint[]> {
   const out: MonthPoint[] = [];
   for (let i = months - 1; i >= 0; i--) {
-    const { start, end } = monthRange(-i);
+    const { start, end } = monthRange(-i, base);
     const r = await db.getFirstAsync<{ income: number; expense: number }>(
       `SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount END),0) AS income,
               COALESCE(SUM(CASE WHEN type='expense' THEN amount END),0) AS expense
@@ -253,11 +254,11 @@ export async function recurringPayments(db: SQLiteDatabase, now = Date.now()) {
 
 export type CategoryTrend = { id: string | null; name: string; color: string; icon: string | null; months: number[] };
 
-/** Spending per category for the last `months` months (oldest first), biggest overall first. */
-export async function categoryTrend(db: SQLiteDatabase, months = 6, now = new Date()): Promise<CategoryTrend[]> {
+/** Spending (or income) per category for the last `months` months (oldest first), biggest overall first. */
+export async function categoryTrend(db: SQLiteDatabase, months = 6, now = new Date(), kind: 'expense' | 'income' = 'expense'): Promise<CategoryTrend[]> {
   const ranges = Array.from({ length: months }, (_, i) => monthRange(i - months + 1, now));
   const byId = new Map<string, CategoryTrend>();
-  const slices = await Promise.all(ranges.map((r) => categoryBreakdown(db, r.start, r.end)));
+  const slices = await Promise.all(ranges.map((r) => categoryBreakdown(db, r.start, r.end, kind)));
   slices.forEach((list, m) => {
     for (const c of list) {
       const key = c.id ?? 'none';
@@ -322,3 +323,11 @@ export async function cardStatements(db: SQLiteDatabase, now = new Date()): Prom
     })
   );
 }
+
+/** The single biggest expense in a period. */
+export const biggestExpense = (db: SQLiteDatabase, from: number, to: number) =>
+  db.getFirstAsync<{ id: string; amount: number; date: number; merchant: string | null; note: string | null; category: string | null }>(
+    `SELECT t.id, t.amount, t.date, t.merchant, t.note, c.name AS category FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
+     WHERE t.deleted = 0 AND t.type = 'expense' AND t.date >= ? AND t.date < ? ORDER BY t.amount DESC LIMIT 1`,
+    [from, to]
+  );
