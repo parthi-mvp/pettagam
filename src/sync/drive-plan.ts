@@ -77,6 +77,23 @@ export function planPull(files: RemoteFile[], me: string, applied: Record<string
   return actions;
 }
 
+/**
+ * This phone's own files already on Drive: after a reinstall (same device id, see src/db/clock.ts)
+ * the new install reads them back like another phone's, then carries on numbering from `seq`.
+ */
+export function ownFiles(files: RemoteFile[], me: string) {
+  const mine = files.filter((f) => parseName(f)?.device === me);
+  let seq: number | null = null;
+  let snapshot: { file: RemoteFile; seq: number } | null = null;
+  for (const f of mine) {
+    const p = parseName(f)!;
+    seq = Math.max(seq ?? 0, p.seq);
+    if (p.kind === 'snapshot') snapshot = { file: f, seq: p.seq };
+  }
+  // Read in the same order as another phone's: its snapshot, then change files after it.
+  return { seq, snapshot, actions: planPull(mine, '', {}) };
+}
+
 /** Snapshot every this many change files; then keep only the newest few change files. */
 export const SNAPSHOT_EVERY = 50;
 export const KEEP_LOGS = 20;

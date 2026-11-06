@@ -10,7 +10,7 @@ import { SYNCED_TABLES } from '@/db/types';
 
 import { packClocks, type Clock, type Row } from './crdt';
 import * as Drive from './drive';
-import { groupDevices, KEEP_LOGS, logName, parseName, planPull, snapshotName, SNAPSHOT_EVERY, staleDevices, VAULT_FILE, type DeviceInfo, type RemoteFile } from './drive-plan';
+import { groupDevices, KEEP_LOGS, logName, ownFiles, parseName, planPull, snapshotName, SNAPSHOT_EVERY, staleDevices, VAULT_FILE, type DeviceInfo, type RemoteFile } from './drive-plan';
 import { describeSyncError } from './errors';
 import { buildSnapshot, mergeIn, type Snapshot } from './snapshot';
 import { deriveKey, fromBase64, isKeySealed, KDF, openWithKey, sealWithKey, toBase64, WrongPasswordError, type KeySealed } from './vault';
@@ -255,7 +255,16 @@ async function pull(db: SQLiteDatabase, me: string) {
     if (p?.kind === 'snapshot') applied[device] = Math.max(applied[device] ?? 0, p.seq);
   };
 
-  for (const a of planPull(files, me, applied)) {
+  // On a full listing (first sync after connecting): files under our own id that this install didn't
+  // write, i.e. an earlier install's (a reinstall keeps the id, src/db/clock.ts). Read them like another
+  // phone's and continue from their numbering, so no change file name is ever reused.
+  const actions = planPull(files, me, applied);
+  const localSeq = await getSetting(db, 'drive_own_seq');
+  const found = since ? null : ownFiles(files, me);
+  const own = found?.seq != null && (localSeq == null || found.seq > Number(localSeq)) ? found : null;
+  if (own) actions.unshift(...own.actions);
+
+  for (const a of actions) {
     if (a.type === 'snapshot') {
       await mergeSnapshot(a.device, a.file);
     } else {
@@ -270,6 +279,11 @@ async function pull(db: SQLiteDatabase, me: string) {
     }
   }
 
+  if (own) {
+    delete applied[me];
+    await setSetting(db, 'drive_own_seq', String(own.seq));
+    if (own.snapshot) await writeJson(db, 'drive_own_snapshot', { id: own.snapshot.file.id, seq: own.snapshot.seq });
+  }
   await writeJson(db, 'drive_applied', applied);
   const newest = files.reduce((m, f) => (f.modifiedTime > m ? f.modifiedTime : m), since ?? '');
   if (newest) await setSetting(db, 'drive_listed_until', newest);

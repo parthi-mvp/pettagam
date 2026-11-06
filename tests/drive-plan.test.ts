@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { groupDevices, listQuery, logName, parseName, planPull, snapshotName, staleDevices, type RemoteFile } from '../src/sync/drive-plan.ts';
+import { groupDevices, listQuery, logName, ownFiles, parseName, planPull, snapshotName, staleDevices, type RemoteFile } from '../src/sync/drive-plan.ts';
 
 let n = 0;
 const file = (name: string, seq?: number, t = '2026-11-06T10:00:00.000Z'): RemoteFile => ({
@@ -74,4 +74,15 @@ test('listQuery: a well-formed Drive search (balanced quotes and brackets)', () 
   }
   assert.equal(listQuery(), "(name contains 'pettagam-' or name contains 'log-') and trashed = false");
   assert.ok(listQuery('2026-11-06T10:00:00.000Z').endsWith(" and modifiedTime > '2026-11-06T10:00:00.000Z'"));
+});
+
+test('ownFiles: a reinstall finds its own snapshot and change files and the seq to continue from', () => {
+  const f = (name: string, seq?: number) => ({ id: name, name, modifiedTime: '2026-11-07T00:00:00Z', appProperties: seq != null ? { seq: String(seq) } : undefined });
+  const files = [f('pettagam-pme1.json', 50), f('log-pme1-00000051.json'), f('log-pme1-00000052.json'), f('pettagam-other.json', 3), f('log-other-00000004.json')];
+  const own = ownFiles(files, 'pme1');
+  assert.equal(own.seq, 52);
+  assert.equal(own.snapshot?.seq, 50);
+  assert.deepEqual(own.actions.map((a) => (a.type === 'snapshot' ? 'snap' : a.seq)), ['snap', 51, 52]);
+  assert.ok(own.actions.every((a) => a.device === 'pme1'));
+  assert.deepEqual(ownFiles(files, 'nobody'), { seq: null, snapshot: null, actions: [] });
 });
